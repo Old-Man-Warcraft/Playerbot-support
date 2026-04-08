@@ -811,8 +811,8 @@ class Database:
     ) -> bool:
         try:
             await self.conn.execute(
-                "INSERT INTO embeddings (guild_id, name, text, embedding, model, source_url, qdrant_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (guild_id, name, text, embedding, model, source_url, qdrant_id),
+                "INSERT INTO embeddings (guild_id, name, text, model, source_url, qdrant_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (guild_id, name, text, model, source_url, qdrant_id),
             )
             await self.conn.commit()
             return True
@@ -830,8 +830,8 @@ class Database:
         qdrant_id: str | None = None,
     ) -> bool:
         cur = await self.conn.execute(
-            "UPDATE embeddings SET text = ?, embedding = ?, model = ?, source_url = ?, qdrant_id = ? WHERE guild_id = ? AND name = ?",
-            (text, embedding, model, source_url, qdrant_id, guild_id, name),
+            "UPDATE embeddings SET text = ?, model = ?, source_url = ?, qdrant_id = ? WHERE guild_id = ? AND name = ?",
+            (text, model, source_url, qdrant_id, guild_id, name),
         )
         await self.conn.commit()
         return cur.rowcount > 0
