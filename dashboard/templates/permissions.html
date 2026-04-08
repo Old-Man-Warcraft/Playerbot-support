@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Permissions — Bot Dashboard{% endblock %}
+{% block header %}Command Permissions{% endblock %}
+
+{% block content %}
+<div class="flex flex-col xl:flex-row gap-6">
+  <div class="w-full xl:w-64 flex-shrink-0">
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-3">Select Guild</h3>
+      <div class="space-y-1">
+        {% for g in guilds %}
+        <a href="/permissions?guild_id={{ g.guild_id }}"
+           class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {% if guild_id == g.guild_id %}bg-[#5865F2]/20 text-white border border-[#5865F2]/30{% else %}text-gray-400 hover:bg-gray-800 hover:text-white{% endif %}"
+           style="text-decoration:none;">
+          <i class="fa fa-server text-xs"></i>
+          <span class="font-mono">{{ g.guild_id }}</span>
+        </a>
+        {% else %}
+        <p class="text-gray-500 text-xs text-center py-4">No guilds found</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="flex-1 min-w-0 space-y-6">
+    {% if not guild_id %}
+    <div class="card p-12 text-center">
+      <i class="fa fa-lock text-4xl text-gray-700 mb-3"></i>
+      <p class="text-gray-400">Select a guild to manage per-command allow/deny overrides.</p>
+    </div>
+    {% else %}
+
+    <div class="card p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">Add or update override</h2>
+          <p class="text-sm text-gray-500">Matches the bot’s `/perm` override system: role, channel, or user.</p>
+        </div>
+        <span class="text-xs text-gray-500">{{ permission_rows|length }} overrides</span>
+      </div>
+
+      <form method="post" action="/permissions/save" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-end">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Command</label>
+          <input class="input" type="text" name="command" placeholder="warn" required/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Target type</label>
+          <select class="input" name="target_type">
+            <option value="role">Role</option>
+            <option value="channel">Channel</option>
+            <option value="user">User</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Target ID</label>
+          <input class="input" type="number" name="target_id" placeholder="123456789012345678" required/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Decision</label>
+          <select class="input" name="allowed">
+            <option value="1">Allow</option>
+            <option value="0">Deny</option>
+          </select>
+        </div>
+        <button class="btn-primary" type="submit"><i class="fa fa-save"></i> Save override</button>
+      </form>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-800">
+        <h2 class="font-semibold text-white">Current overrides</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 text-xs border-b border-gray-800">
+              <th class="px-4 py-3 font-medium">Command</th>
+              <th class="px-4 py-3 font-medium">Target Type</th>
+              <th class="px-4 py-3 font-medium">Target ID</th>
+              <th class="px-4 py-3 font-medium">Decision</th>
+              <th class="px-4 py-3 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in permission_rows %}
+            <tr class="table-row">
+              <td class="px-4 py-3 text-gray-200 font-medium">/{{ row.command }}</td>
+              <td class="px-4 py-3 text-gray-400">{{ row.target_type }}</td>
+              <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ row.target_id }}</td>
+              <td class="px-4 py-3">
+                <span class="badge {{ 'bg-green-500/20 text-green-400 border border-green-500/30' if row.allowed else 'bg-red-500/20 text-red-400 border border-red-500/30' }}">
+                  {{ 'Allow' if row.allowed else 'Deny' }}
+                </span>
+              </td>
+              <td class="px-4 py-3">
+                <form method="post" action="/permissions/delete" onsubmit="return confirm('Delete this permission override?')">
+                  <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                  <input type="hidden" name="permission_id" value="{{ row.id }}"/>
+                  <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="px-4 py-10 text-center text-gray-500">No custom command permissions configured.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

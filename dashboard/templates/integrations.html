@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Integrations — Bot Dashboard{% endblock %}
+{% block header %}Integrations{% endblock %}
+
+{% block content %}
+<div class="flex flex-col xl:flex-row gap-6">
+  <div class="w-full xl:w-64 flex-shrink-0 space-y-4">
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-3">Select Guild</h3>
+      <div class="space-y-1">
+        {% for g in guilds %}
+        <a href="/integrations?guild_id={{ g.guild_id }}"
+           class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {% if guild_id == g.guild_id %}bg-[#5865F2]/20 text-white border border-[#5865F2]/30{% else %}text-gray-400 hover:bg-gray-800 hover:text-white{% endif %}"
+           style="text-decoration:none;">
+          <i class="fa fa-server text-xs"></i>
+          <span class="font-mono">{{ g.guild_id }}</span>
+        </a>
+        {% else %}
+        <p class="text-gray-500 text-xs text-center py-4">No guilds found</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-2">GitHub API</h3>
+      <p class="text-sm {{ 'text-green-400' if github_token_configured else 'text-yellow-400' }}">
+        {{ 'Authenticated token configured' if github_token_configured else 'No GitHub token configured' }}
+      </p>
+      <p class="text-xs text-gray-500 mt-2">Without a token, GitHub rate limits get grumpy fast.</p>
+    </div>
+  </div>
+
+  <div class="flex-1 min-w-0 space-y-6">
+    {% if not guild_id %}
+    <div class="card p-12 text-center">
+      <i class="fa fa-code-branch text-4xl text-gray-700 mb-3"></i>
+      <p class="text-gray-400">Select a guild to manage GitHub subscriptions and integration health.</p>
+    </div>
+    {% else %}
+
+    <div class="card p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">GitHub subscriptions</h2>
+          <p class="text-sm text-gray-500">Watch pushes, PRs, issues, and releases in any channel.</p>
+        </div>
+        <span class="text-xs text-gray-500">{{ subscriptions|length }} active</span>
+      </div>
+
+      <form method="post" action="/integrations/github/save" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-6 items-end">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Repo</label>
+          <input class="input" type="text" name="repo" placeholder="owner/repo" required/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Channel ID</label>
+          <input class="input" type="number" name="channel_id" placeholder="123456789012345678" required/>
+        </div>
+        <div class="xl:col-span-2">
+          <label class="text-xs text-gray-500 mb-1 block">Events</label>
+          <input class="input" type="text" name="events" value="push,pull_request,issues,release" placeholder="push,pull_request,issues,release" required/>
+        </div>
+        <button class="btn-primary" type="submit"><i class="fa fa-plus"></i> Save subscription</button>
+      </form>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 text-xs border-b border-gray-800">
+              <th class="px-4 py-3 font-medium">Repo</th>
+              <th class="px-4 py-3 font-medium">Channel</th>
+              <th class="px-4 py-3 font-medium">Events</th>
+              <th class="px-4 py-3 font-medium">Added</th>
+              <th class="px-4 py-3 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in subscriptions %}
+            <tr class="table-row">
+              <td class="px-4 py-3 text-gray-200 font-medium">{{ row.repo }}</td>
+              <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ row.channel_id }}</td>
+              <td class="px-4 py-3 text-gray-400 text-xs break-all">{{ row.events }}</td>
+              <td class="px-4 py-3 text-gray-500 text-xs">{{ row.created_at[:16] if row.created_at else '—' }}</td>
+              <td class="px-4 py-3">
+                <form method="post" action="/integrations/github/delete" onsubmit="return confirm('Delete this GitHub subscription?')">
+                  <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                  <input type="hidden" name="subscription_id" value="{{ row.id }}"/>
+                  <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="px-4 py-10 text-center text-gray-500">No GitHub subscriptions configured yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">Poll state</h2>
+          <p class="text-sm text-gray-500">Last-seen event markers and ETags for subscribed repositories.</p>
+        </div>
+        <span class="text-xs text-gray-500">{{ poll_state|length }} rows</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 text-xs border-b border-gray-800">
+              <th class="px-4 py-3 font-medium">Repo</th>
+              <th class="px-4 py-3 font-medium">Event Type</th>
+              <th class="px-4 py-3 font-medium">Last ID</th>
+              <th class="px-4 py-3 font-medium">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in poll_state %}
+            <tr class="table-row">
+              <td class="px-4 py-3 text-gray-200">{{ row.repo }}</td>
+              <td class="px-4 py-3 text-gray-400">{{ row.event_type }}</td>
+              <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ row.last_id or '—' }}</td>
+              <td class="px-4 py-3 text-gray-500 text-xs">{{ row.updated_at[:16] if row.updated_at else '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="px-4 py-10 text-center text-gray-500">No poll state yet. Once the poller sees events, they’ll show up here.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

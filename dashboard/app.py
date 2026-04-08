@@ -17,6 +17,8 @@ import hashlib
 import secrets
 import logging
 import asyncio
+import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,8 +30,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-# Import configuration schemas
-from dashboard.config_schema import get_config_categories
 from dashboard.dynamic_config_schema import DynamicConfigSchema
 from bot.config import Config
 from bot.model_discovery import ModelDiscoveryService
@@ -65,6 +65,71 @@ def _now() -> str:
 def ctx(extra: dict) -> dict:
     """Build template context with common fields (now timestamp)."""
     return {"now": _now(), **extra}
+
+
+GUILD_ID_QUERIES = [
+    "SELECT DISTINCT guild_id FROM guild_config WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM mod_cases WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM warnings WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM tickets WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM automod_filters WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM conversation_history WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM embeddings WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM custom_functions WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM token_usage WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM assistant_triggers WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM economy_accounts WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM custom_commands WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM reports WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM selfroles WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM command_permissions WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM levels WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM giveaways WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM reminders WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM starboard_messages WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM highlights WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM github_subscriptions WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM learned_facts WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM response_feedback WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM crawl_sources WHERE guild_id IS NOT NULL",
+]
+
+GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
+VALID_GITHUB_EVENTS = {"push", "pull_request", "issues", "release"}
+
+
+async def get_all_guilds() -> list[dict[str, int]]:
+    query = " UNION ".join(GUILD_ID_QUERIES) + " ORDER BY guild_id"
+    return await db_fetchall(query)
+
+
+async def get_guild_config_map(guild_id: int) -> dict[str, str]:
+    rows = await db_fetchall(
+        "SELECT key, value FROM guild_config WHERE guild_id = ? ORDER BY key",
+        (guild_id,),
+    )
+    return {row["key"]: row["value"] for row in rows}
+
+
+def parse_csv_ids(value: str | None) -> list[int]:
+    if not value:
+        return []
+    ids: list[int] = []
+    for part in value.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            ids.append(int(token))
+        except ValueError:
+            continue
+    return ids
+
+
+def normalise_github_events(raw: str) -> str:
+    events = {event.strip().lower() for event in raw.split(",") if event.strip()}
+    valid = sorted(events & VALID_GITHUB_EVENTS)
+    return ",".join(valid)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +225,7 @@ async def index(request: Request):
     cases     = await db_fetchone("SELECT COUNT(*) as c FROM mod_cases")
     tickets   = await db_fetchone("SELECT COUNT(*) as c FROM tickets WHERE status != 'closed'")
     warnings  = await db_fetchone("SELECT COUNT(*) as c FROM warnings WHERE active = 1")
-    guilds    = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config")
+    guilds    = await get_all_guilds()
     reports   = await db_fetchone("SELECT COUNT(*) as c FROM reports WHERE status = 'open'")
     giveaways = await db_fetchone("SELECT COUNT(*) as c FROM giveaways WHERE status = 'active'")
     economy   = await db_fetchone("SELECT COUNT(*) as c FROM economy_accounts")
@@ -201,7 +266,7 @@ async def config_page(request: Request, guild_id: int | None = None):
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
 
     config_rows = []
     config_values = {}
@@ -295,6 +360,433 @@ async def refresh_models(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Assistant management
+# ---------------------------------------------------------------------------
+
+@app.get("/assistant", response_class=HTMLResponse)
+async def assistant_page(request: Request, guild_id: int | None = None):
+    if r := auth_redirect(request):
+        return r
+
+    guilds = await get_all_guilds()
+    config_values: dict[str, str] = {}
+    triggers: list[dict] = []
+    custom_functions: list[dict] = []
+    listen_channels: list[dict[str, int | str]] = []
+    channel_prompts: list[dict[str, int | str]] = []
+    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    conversations = {"messages": 0, "users": 0, "channels": 0, "tokens": 0}
+
+    if guild_id:
+        config_values = await get_guild_config_map(guild_id)
+        triggers = await db_fetchall(
+            "SELECT id, pattern FROM assistant_triggers WHERE guild_id = ? ORDER BY pattern",
+            (guild_id,),
+        )
+        custom_functions = await db_fetchall(
+            "SELECT id, name, description, parameters, code, enabled FROM custom_functions WHERE guild_id = ? ORDER BY name",
+            (guild_id,),
+        )
+        usage = await db_fetchone(
+            "SELECT COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM token_usage WHERE guild_id = ?",
+            (guild_id,),
+        ) or usage
+        conversations = await db_fetchone(
+            "SELECT COUNT(*) AS messages, COUNT(DISTINCT user_id) AS users, COUNT(DISTINCT channel_id) AS channels, COALESCE(SUM(token_count), 0) AS tokens FROM conversation_history WHERE guild_id = ?",
+            (guild_id,),
+        ) or conversations
+
+        listen_rows = await db_fetchall(
+            "SELECT key, value FROM guild_config WHERE guild_id = ? AND key LIKE 'listen_channel_%' ORDER BY key",
+            (guild_id,),
+        )
+        for row in listen_rows:
+            try:
+                listen_channels.append({
+                    "channel_id": int(row["key"].split("_")[-1]),
+                    "value": row["value"],
+                })
+            except ValueError:
+                continue
+
+        prompt_rows = await db_fetchall(
+            "SELECT key, value FROM guild_config WHERE guild_id = ? AND key LIKE 'channel_prompt_%' AND COALESCE(value, '') != '' ORDER BY key",
+            (guild_id,),
+        )
+        for row in prompt_rows:
+            try:
+                channel_prompts.append({
+                    "channel_id": int(row["key"].split("_")[-1]),
+                    "value": row["value"],
+                })
+            except ValueError:
+                continue
+
+    return templates.TemplateResponse(request, "assistant.html", ctx({
+        "guilds": guilds,
+        "guild_id": guild_id,
+        "config_values": config_values,
+        "triggers": triggers,
+        "custom_functions": custom_functions,
+        "listen_channels": listen_channels,
+        "channel_prompts": channel_prompts,
+        "usage": usage,
+        "conversations": conversations,
+        "active_page": "assistant",
+    }))
+
+
+@app.post("/assistant/triggers/add")
+async def assistant_trigger_add(request: Request, guild_id: int = Form(...), pattern: str = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    pattern = pattern.strip()
+    if pattern:
+        re.compile(pattern)
+        await db_execute(
+            "INSERT OR IGNORE INTO assistant_triggers (guild_id, pattern) VALUES (?, ?)",
+            (guild_id, pattern),
+        )
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/triggers/delete")
+async def assistant_trigger_delete(request: Request, guild_id: int = Form(...), trigger_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM assistant_triggers WHERE id = ? AND guild_id = ?", (trigger_id, guild_id))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/functions/save")
+async def assistant_function_save(
+    request: Request,
+    guild_id: int = Form(...),
+    name: str = Form(...),
+    description: str = Form(...),
+    parameters: str = Form(...),
+    code: str = Form(...),
+):
+    if r := auth_redirect(request):
+        return r
+    json.loads(parameters)
+    await db_execute(
+        "INSERT INTO custom_functions (guild_id, name, description, parameters, code, enabled) VALUES (?, ?, ?, ?, ?, 1) "
+        "ON CONFLICT(guild_id, name) DO UPDATE SET description = excluded.description, parameters = excluded.parameters, code = excluded.code",
+        (guild_id, name.strip(), description.strip(), parameters.strip(), code),
+    )
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/functions/toggle")
+async def assistant_function_toggle(request: Request, guild_id: int = Form(...), function_id: int = Form(...), enabled: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute(
+        "UPDATE custom_functions SET enabled = ? WHERE id = ? AND guild_id = ?",
+        (enabled, function_id, guild_id),
+    )
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/functions/delete")
+async def assistant_function_delete(request: Request, guild_id: int = Form(...), function_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM custom_functions WHERE id = ? AND guild_id = ?", (function_id, guild_id))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/listen/save")
+async def assistant_listen_save(request: Request, guild_id: int = Form(...), channel_id: int = Form(...), enabled: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    key = f"listen_channel_{channel_id}"
+    if enabled:
+        await db_execute(
+            "INSERT INTO guild_config (guild_id, key, value) VALUES (?, ?, '1') ON CONFLICT(guild_id, key) DO UPDATE SET value = '1'",
+            (guild_id, key),
+        )
+    else:
+        await db_execute("DELETE FROM guild_config WHERE guild_id = ? AND key = ?", (guild_id, key))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/channel-prompts/save")
+async def assistant_channel_prompt_save(request: Request, guild_id: int = Form(...), channel_id: int = Form(...), prompt: str = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    key = f"channel_prompt_{channel_id}"
+    if prompt.strip():
+        await db_execute(
+            "INSERT INTO guild_config (guild_id, key, value) VALUES (?, ?, ?) ON CONFLICT(guild_id, key) DO UPDATE SET value = excluded.value",
+            (guild_id, key, prompt.strip()),
+        )
+    else:
+        await db_execute("DELETE FROM guild_config WHERE guild_id = ? AND key = ?", (guild_id, key))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/channel-prompts/delete")
+async def assistant_channel_prompt_delete(request: Request, guild_id: int = Form(...), channel_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM guild_config WHERE guild_id = ? AND key = ?", (guild_id, f"channel_prompt_{channel_id}"))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/usage/reset")
+async def assistant_usage_reset(request: Request, guild_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM token_usage WHERE guild_id = ?", (guild_id,))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/conversations/reset")
+async def assistant_conversations_reset(request: Request, guild_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM conversation_history WHERE guild_id = ?", (guild_id,))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Community systems management
+# ---------------------------------------------------------------------------
+
+@app.get("/community", response_class=HTMLResponse)
+async def community_page(request: Request, guild_id: int | None = None):
+    if r := auth_redirect(request):
+        return r
+
+    guilds = await get_all_guilds()
+    config_values: dict[str, str] = {}
+    selfroles: list[dict] = []
+    highlights: list[dict] = []
+    starboard_entries: list[dict] = []
+
+    if guild_id:
+        config_values = await get_guild_config_map(guild_id)
+        selfroles = await db_fetchall(
+            "SELECT role_id FROM selfroles WHERE guild_id = ? ORDER BY role_id",
+            (guild_id,),
+        )
+        highlights = await db_fetchall(
+            "SELECT h.user_id, h.keyword, COALESCE((SELECT gc.value FROM guild_config gc WHERE gc.guild_id = h.guild_id AND gc.key = 'highlight_pause_' || h.user_id), '0') AS paused "
+            "FROM highlights h WHERE h.guild_id = ? ORDER BY h.user_id, h.keyword",
+            (guild_id,),
+        )
+        starboard_entries = await db_fetchall(
+            "SELECT * FROM starboard_messages WHERE guild_id = ? ORDER BY star_count DESC, created_at DESC LIMIT 50",
+            (guild_id,),
+        )
+
+    return templates.TemplateResponse(request, "community.html", ctx({
+        "guilds": guilds,
+        "guild_id": guild_id,
+        "config_values": config_values,
+        "selfroles": selfroles,
+        "highlights": highlights,
+        "starboard_entries": starboard_entries,
+        "active_page": "community",
+    }))
+
+
+@app.post("/community/selfroles/add")
+async def community_selfrole_add(request: Request, guild_id: int = Form(...), role_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("INSERT OR IGNORE INTO selfroles (guild_id, role_id) VALUES (?, ?)", (guild_id, role_id))
+    return RedirectResponse(f"/community?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/community/selfroles/delete")
+async def community_selfrole_delete(request: Request, guild_id: int = Form(...), role_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM selfroles WHERE guild_id = ? AND role_id = ?", (guild_id, role_id))
+    return RedirectResponse(f"/community?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/community/highlights/add")
+async def community_highlight_add(request: Request, guild_id: int = Form(...), user_id: int = Form(...), keyword: str = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    keyword = keyword.strip().lower()
+    if keyword:
+        await db_execute("INSERT OR IGNORE INTO highlights (user_id, guild_id, keyword) VALUES (?, ?, ?)", (user_id, guild_id, keyword))
+    return RedirectResponse(f"/community?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/community/highlights/delete")
+async def community_highlight_delete(request: Request, guild_id: int = Form(...), user_id: int = Form(...), keyword: str = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM highlights WHERE guild_id = ? AND user_id = ? AND keyword = ?", (guild_id, user_id, keyword))
+    return RedirectResponse(f"/community?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/community/highlights/toggle-pause")
+async def community_highlight_toggle_pause(request: Request, guild_id: int = Form(...), user_id: int = Form(...), paused: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    key = f"highlight_pause_{user_id}"
+    await db_execute(
+        "INSERT INTO guild_config (guild_id, key, value) VALUES (?, ?, ?) ON CONFLICT(guild_id, key) DO UPDATE SET value = excluded.value",
+        (guild_id, key, "1" if paused else "0"),
+    )
+    return RedirectResponse(f"/community?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/community/starboard/save")
+async def community_starboard_save(
+    request: Request,
+    guild_id: int = Form(...),
+    starboard_enabled: str = Form("1"),
+    starboard_channel: str = Form(""),
+    starboard_threshold: str = Form("3"),
+    starboard_emoji: str = Form("⭐"),
+    starboard_ignore_channels: str = Form(""),
+):
+    if r := auth_redirect(request):
+        return r
+    settings = {
+        "starboard_enabled": starboard_enabled,
+        "starboard_channel": starboard_channel.strip(),
+        "starboard_threshold": starboard_threshold.strip() or "3",
+        "starboard_emoji": starboard_emoji.strip() or "⭐",
+        "starboard_ignore_channels": starboard_ignore_channels.strip(),
+    }
+    for key, value in settings.items():
+        if value:
+            await db_execute(
+                "INSERT INTO guild_config (guild_id, key, value) VALUES (?, ?, ?) ON CONFLICT(guild_id, key) DO UPDATE SET value = excluded.value",
+                (guild_id, key, value),
+            )
+        else:
+            await db_execute("DELETE FROM guild_config WHERE guild_id = ? AND key = ?", (guild_id, key))
+    return RedirectResponse(f"/community?guild_id={guild_id}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Integrations management
+# ---------------------------------------------------------------------------
+
+@app.get("/integrations", response_class=HTMLResponse)
+async def integrations_page(request: Request, guild_id: int | None = None):
+    if r := auth_redirect(request):
+        return r
+
+    guilds = await get_all_guilds()
+    subscriptions: list[dict] = []
+    poll_state: list[dict] = []
+
+    if guild_id:
+        subscriptions = await db_fetchall(
+            "SELECT * FROM github_subscriptions WHERE guild_id = ? ORDER BY repo, channel_id",
+            (guild_id,),
+        )
+        state_rows = await db_fetchall("SELECT * FROM github_poll_state ORDER BY updated_at DESC")
+        repos = {row["repo"] for row in subscriptions}
+        poll_state = [row for row in state_rows if row["repo"] in repos]
+
+    return templates.TemplateResponse(request, "integrations.html", ctx({
+        "guilds": guilds,
+        "guild_id": guild_id,
+        "subscriptions": subscriptions,
+        "poll_state": poll_state,
+        "github_token_configured": bool(config.github_token),
+        "active_page": "integrations",
+    }))
+
+
+@app.post("/integrations/github/save")
+async def integrations_github_save(
+    request: Request,
+    guild_id: int = Form(...),
+    channel_id: int = Form(...),
+    repo: str = Form(...),
+    events: str = Form(...),
+):
+    if r := auth_redirect(request):
+        return r
+    repo = repo.strip()
+    if not GITHUB_REPO_RE.match(repo):
+        raise HTTPException(status_code=400, detail="Invalid repo format")
+    events_value = normalise_github_events(events) or "push,pull_request,issues,release"
+    await db_execute(
+        "INSERT INTO github_subscriptions (guild_id, channel_id, repo, events, added_by) VALUES (?, ?, ?, ?, 0) "
+        "ON CONFLICT(guild_id, channel_id, repo) DO UPDATE SET events = excluded.events",
+        (guild_id, channel_id, repo, events_value),
+    )
+    return RedirectResponse(f"/integrations?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/integrations/github/delete")
+async def integrations_github_delete(request: Request, guild_id: int = Form(...), subscription_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM github_subscriptions WHERE id = ? AND guild_id = ?", (subscription_id, guild_id))
+    return RedirectResponse(f"/integrations?guild_id={guild_id}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Permission overrides
+# ---------------------------------------------------------------------------
+
+@app.get("/permissions", response_class=HTMLResponse)
+async def permissions_page(request: Request, guild_id: int | None = None):
+    if r := auth_redirect(request):
+        return r
+
+    guilds = await get_all_guilds()
+    permission_rows: list[dict] = []
+
+    if guild_id:
+        permission_rows = await db_fetchall(
+            "SELECT * FROM command_permissions WHERE guild_id = ? ORDER BY command, target_type, target_id",
+            (guild_id,),
+        )
+
+    return templates.TemplateResponse(request, "permissions.html", ctx({
+        "guilds": guilds,
+        "guild_id": guild_id,
+        "permission_rows": permission_rows,
+        "active_page": "permissions",
+    }))
+
+
+@app.post("/permissions/save")
+async def permissions_save(
+    request: Request,
+    guild_id: int = Form(...),
+    command: str = Form(...),
+    target_type: str = Form(...),
+    target_id: int = Form(...),
+    allowed: int = Form(...),
+):
+    if r := auth_redirect(request):
+        return r
+    if target_type not in {"role", "channel", "user"}:
+        raise HTTPException(status_code=400, detail="Invalid target type")
+    await db_execute(
+        "INSERT INTO command_permissions (guild_id, command, target_type, target_id, allowed) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(guild_id, command, target_type, target_id) DO UPDATE SET allowed = excluded.allowed",
+        (guild_id, command.strip().lstrip("/"), target_type, target_id, allowed),
+    )
+    return RedirectResponse(f"/permissions?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/permissions/delete")
+async def permissions_delete(request: Request, guild_id: int = Form(...), permission_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM command_permissions WHERE id = ? AND guild_id = ?", (permission_id, guild_id))
+    return RedirectResponse(f"/permissions?guild_id={guild_id}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
 # Moderation cases
 # ---------------------------------------------------------------------------
 
@@ -303,7 +795,7 @@ async def moderation_page(request: Request, guild_id: int | None = None, user_id
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     per_page = 25
     offset = (page - 1) * per_page
 
@@ -356,7 +848,7 @@ async def warnings_page(request: Request, guild_id: int | None = None, user_id: 
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     warnings = []
     if guild_id:
         if user_id:
@@ -396,7 +888,7 @@ async def tickets_page(request: Request, guild_id: int | None = None, status: st
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     tickets = []
     if guild_id:
         if status == "all":
@@ -448,7 +940,7 @@ async def automod_page(request: Request, guild_id: int | None = None):
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     filters = []
     if guild_id:
         filters = await db_fetchall(
@@ -495,7 +987,7 @@ async def economy_page(request: Request, guild_id: int | None = None, page: int 
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     per_page = 25
     offset = (page - 1) * per_page
     accounts = []
@@ -551,7 +1043,7 @@ async def levels_page(request: Request, guild_id: int | None = None, page: int =
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     per_page = 25
     offset = (page - 1) * per_page
     entries = []
@@ -607,7 +1099,7 @@ async def giveaways_page(request: Request, guild_id: int | None = None, status: 
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     giveaways = []
     if guild_id:
         if status == "all":
@@ -693,7 +1185,7 @@ async def custom_commands_page(request: Request, guild_id: int | None = None):
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM custom_commands ORDER BY guild_id")
+    guilds = await get_all_guilds()
     commands = []
     if guild_id:
         commands = await db_fetchall(
@@ -740,7 +1232,7 @@ async def reminders_page(request: Request, guild_id: int | None = None):
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     reminders = []
     if guild_id:
         reminders = await db_fetchall(
@@ -773,7 +1265,7 @@ async def knowledge_page(request: Request, guild_id: int | None = None, tab: str
     if r := auth_redirect(request):
         return r
 
-    guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
+    guilds = await get_all_guilds()
     entries = []
     sources = []
     learned_facts = []
@@ -1051,7 +1543,5 @@ async def api_stats(request: Request):
 @app.get("/api/guilds")
 async def api_guilds(request: Request):
     require_auth(request)
-    guilds = await db_fetchall(
-        "SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id"
-    )
+    guilds = await get_all_guilds()
     return [g["guild_id"] for g in guilds]

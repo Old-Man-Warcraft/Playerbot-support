@@ -45,10 +45,11 @@
                 {% if category == "AI Assistant" %}<i class="fa fa-robot text-blue-400"></i>
                 {% elif category == "Moderation" %}<i class="fa fa-gavel text-red-400"></i>
                 {% elif category == "Auto-Moderation" %}<i class="fa fa-shield text-orange-400"></i>
-                {% elif category == "Channels" %}<i class="fa fa-hashtag text-green-400"></i>
+                {% elif category == "Welcome & Tickets" %}<i class="fa fa-door-open text-green-400"></i>
                 {% elif category == "Economy" %}<i class="fa fa-coins text-yellow-400"></i>
                 {% elif category == "Leveling" %}<i class="fa fa-chart-line text-purple-400"></i>
-                {% elif category == "Roles" %}<i class="fa fa-user-tag text-indigo-400"></i>
+                {% elif category == "Starboard" %}<i class="fa fa-star text-amber-400"></i>
+                {% else %}<i class="fa fa-gear text-indigo-400"></i>
                 {% endif %}
                 {{ category }} ({{ keys|length }} keys)
               </h3>

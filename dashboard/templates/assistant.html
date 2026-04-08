@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}Assistant Control — Bot Dashboard{% endblock %}
+{% block header %}Assistant Control{% endblock %}
+
+{% block content %}
+<div class="flex flex-col xl:flex-row gap-6">
+  <div class="w-full xl:w-64 flex-shrink-0 space-y-4">
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-3">Select Guild</h3>
+      <div class="space-y-1">
+        {% for g in guilds %}
+        <a href="/assistant?guild_id={{ g.guild_id }}"
+           class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {% if guild_id == g.guild_id %}bg-[#5865F2]/20 text-white border border-[#5865F2]/30{% else %}text-gray-400 hover:bg-gray-800 hover:text-white{% endif %}"
+           style="text-decoration:none;">
+          <i class="fa fa-server text-xs"></i>
+          <span class="font-mono">{{ g.guild_id }}</span>
+        </a>
+        {% else %}
+        <p class="text-gray-500 text-xs text-center py-4">No guilds found</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if guild_id %}
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-3">Quick Links</h3>
+      <div class="space-y-2 text-sm">
+        <a href="/config?guild_id={{ guild_id }}" class="sidebar-link !px-0 !py-1 hover:!bg-transparent text-[#5865F2] hover:underline">
+          <i class="fa fa-sliders w-4 text-center"></i> Core assistant settings
+        </a>
+        <a href="/knowledge?guild_id={{ guild_id }}&tab=feedback" class="sidebar-link !px-0 !py-1 hover:!bg-transparent text-[#5865F2] hover:underline">
+          <i class="fa fa-star w-4 text-center"></i> Feedback & learning
+        </a>
+        <a href="/knowledge?guild_id={{ guild_id }}&tab=embeddings" class="sidebar-link !px-0 !py-1 hover:!bg-transparent text-[#5865F2] hover:underline">
+          <i class="fa fa-database w-4 text-center"></i> Knowledge base
+        </a>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="flex-1 min-w-0 space-y-6">
+    {% if not guild_id %}
+    <div class="card p-12 text-center">
+      <i class="fa fa-robot text-4xl text-gray-700 mb-3"></i>
+      <p class="text-gray-400">Select a guild to manage assistant automations, triggers, functions, and conversation controls.</p>
+    </div>
+    {% else %}
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Assistant</p>
+        <p class="text-xl font-semibold {{ 'text-green-400' if config_values.get('assistant_enabled', '1') != '0' else 'text-red-400' }}">
+          {{ 'Enabled' if config_values.get('assistant_enabled', '1') != '0' else 'Disabled' }}
+        </p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Token usage</p>
+        <p class="text-xl font-semibold text-white">{{ '{:,}'.format((usage.prompt_tokens or 0) + (usage.completion_tokens or 0)) }}</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Conversation messages</p>
+        <p class="text-xl font-semibold text-white">{{ conversations.messages or 0 }}</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Custom functions</p>
+        <p class="text-xl font-semibold text-white">{{ custom_functions|length }}</p>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">Live assistant snapshot</h2>
+          <p class="text-sm text-gray-500">This mirrors the dynamic assistant controls beyond the standard config form.</p>
+        </div>
+        <a href="/config?guild_id={{ guild_id }}" class="btn-secondary" style="text-decoration:none;">
+          <i class="fa fa-sliders"></i> Edit core settings
+        </a>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+          <p class="text-gray-500 text-xs mb-1">Model</p>
+          <p class="text-gray-200 break-all">{{ config_values.get('assistant_model', 'default') }}</p>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+          <p class="text-gray-500 text-xs mb-1">Embedding model</p>
+          <p class="text-gray-200 break-all">{{ config_values.get('assistant_embedding_model', 'default') }}</p>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+          <p class="text-gray-500 text-xs mb-1">Relatedness</p>
+          <p class="text-gray-200">{{ config_values.get('assistant_relatedness', '0.3') }}</p>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+          <p class="text-gray-500 text-xs mb-1">Learning</p>
+          <p class="text-gray-200">{{ 'Enabled' if config_values.get('assistant_learning_enabled', '1') != '0' else 'Disabled' }}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-white">Trigger phrases</h2>
+          <span class="text-xs text-gray-500">{{ triggers|length }} active</span>
+        </div>
+        <form method="post" action="/assistant/triggers/add" class="flex gap-3 mb-4 items-end">
+          <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+          <div class="flex-1">
+            <label class="text-xs text-gray-500 mb-1 block">Regex pattern</label>
+            <input class="input" type="text" name="pattern" placeholder="help|support|refund" required/>
+          </div>
+          <button class="btn-primary" type="submit"><i class="fa fa-plus"></i> Add</button>
+        </form>
+        <div class="space-y-2 max-h-[22rem] overflow-y-auto">
+          {% for trigger in triggers %}
+          <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+            <code class="text-sm text-gray-300 break-all">{{ trigger.pattern }}</code>
+            <form method="post" action="/assistant/triggers/delete" onsubmit="return confirm('Delete this trigger?')">
+              <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+              <input type="hidden" name="trigger_id" value="{{ trigger.id }}"/>
+              <button class="btn-danger"><i class="fa fa-trash"></i></button>
+            </form>
+          </div>
+          {% else %}
+          <p class="text-sm text-gray-500 text-center py-8">No triggers configured yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-white">Conversation & usage controls</h2>
+          <span class="text-xs text-gray-500">Live operations</span>
+        </div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+            <p class="text-xs text-gray-500">Prompt tokens</p>
+            <p class="text-lg font-semibold text-blue-300">{{ '{:,}'.format(usage.prompt_tokens or 0) }}</p>
+          </div>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+            <p class="text-xs text-gray-500">Completion tokens</p>
+            <p class="text-lg font-semibold text-green-300">{{ '{:,}'.format(usage.completion_tokens or 0) }}</p>
+          </div>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+            <p class="text-xs text-gray-500">Users with history</p>
+            <p class="text-lg font-semibold text-white">{{ conversations.users or 0 }}</p>
+          </div>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+            <p class="text-xs text-gray-500">Channels with history</p>
+            <p class="text-lg font-semibold text-white">{{ conversations.channels or 0 }}</p>
+          </div>
+        </div>
+        <div class="flex gap-3 flex-wrap">
+          <form method="post" action="/assistant/usage/reset" onsubmit="return confirm('Reset token usage stats for this guild?')">
+            <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+            <button class="btn-danger"><i class="fa fa-eraser"></i> Reset usage</button>
+          </form>
+          <form method="post" action="/assistant/conversations/reset" onsubmit="return confirm('Delete all conversation history for this guild?')">
+            <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+            <button class="btn-danger"><i class="fa fa-comments-slash"></i> Reset conversations</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div class="card p-5">
+        <h2 class="font-semibold text-white mb-4">Listen channels</h2>
+        <form method="post" action="/assistant/listen/save" class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 mb-4 items-end">
+          <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Channel ID</label>
+            <input class="input" type="number" name="channel_id" placeholder="123456789012345678" required/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Mode</label>
+            <select class="input" name="enabled">
+              <option value="1">Enable listening</option>
+              <option value="0">Disable / remove</option>
+            </select>
+          </div>
+          <button class="btn-primary" type="submit"><i class="fa fa-save"></i> Save</button>
+        </form>
+        <div class="space-y-2 max-h-[18rem] overflow-y-auto">
+          {% for row in listen_channels %}
+          <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+            <div>
+              <p class="text-sm text-gray-200 font-mono">{{ row.channel_id }}</p>
+              <p class="text-xs text-green-400">Auto-response enabled</p>
+            </div>
+            <form method="post" action="/assistant/listen/save">
+              <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+              <input type="hidden" name="channel_id" value="{{ row.channel_id }}"/>
+              <input type="hidden" name="enabled" value="0"/>
+              <button class="btn-danger"><i class="fa fa-xmark"></i> Remove</button>
+            </form>
+          </div>
+          {% else %}
+          <p class="text-sm text-gray-500 text-center py-8">No listen channels configured.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card p-5">
+        <h2 class="font-semibold text-white mb-4">Channel prompts</h2>
+        <form method="post" action="/assistant/channel-prompts/save" class="space-y-3 mb-4">
+          <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Channel ID</label>
+            <input class="input" type="number" name="channel_id" placeholder="123456789012345678" required/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Prompt addition</label>
+            <textarea class="input resize-y" rows="3" name="prompt" placeholder="Extra context or rules for this channel."></textarea>
+          </div>
+          <button class="btn-primary" type="submit"><i class="fa fa-save"></i> Save prompt</button>
+        </form>
+        <div class="space-y-2 max-h-[20rem] overflow-y-auto">
+          {% for row in channel_prompts %}
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <p class="text-sm text-gray-200 font-mono mb-1">{{ row.channel_id }}</p>
+                <p class="text-xs text-gray-400 break-words">{{ row.value }}</p>
+              </div>
+              <form method="post" action="/assistant/channel-prompts/delete" onsubmit="return confirm('Delete this channel prompt?')">
+                <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                <input type="hidden" name="channel_id" value="{{ row.channel_id }}"/>
+                <button class="btn-danger"><i class="fa fa-trash"></i></button>
+              </form>
+            </div>
+          </div>
+          {% else %}
+          <p class="text-sm text-gray-500 text-center py-8">No channel-specific prompts yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">Custom functions</h2>
+          <p class="text-sm text-gray-500">Create or update AI-callable tools with JSON schema and Python code.</p>
+        </div>
+        <span class="text-xs text-gray-500">{{ custom_functions|length }} defined</span>
+      </div>
+      <form method="post" action="/assistant/functions/save" class="space-y-3 mb-6">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Function name</label>
+            <input class="input" type="text" name="name" placeholder="lookup_order_status" required/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Description</label>
+            <input class="input" type="text" name="description" placeholder="Explain when the assistant should call this function." required/>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Parameters JSON schema</label>
+          <textarea class="input resize-y font-mono" rows="5" name="parameters" placeholder='{"type":"object","properties":{"order_id":{"type":"string"}},"required":["order_id"]}' required></textarea>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Python code</label>
+          <textarea class="input resize-y font-mono" rows="7" name="code" placeholder="def run(order_id: str) -> str:\n    return f'Order {order_id} is processing.'" required></textarea>
+        </div>
+        <button class="btn-primary" type="submit"><i class="fa fa-floppy-disk"></i> Save function</button>
+      </form>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 text-xs border-b border-gray-800">
+              <th class="px-4 py-3 font-medium">Name</th>
+              <th class="px-4 py-3 font-medium">Status</th>
+              <th class="px-4 py-3 font-medium">Description</th>
+              <th class="px-4 py-3 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fn in custom_functions %}
+            <tr class="table-row align-top">
+              <td class="px-4 py-3 text-gray-200 font-mono text-xs">{{ fn.name }}</td>
+              <td class="px-4 py-3">
+                <span class="badge {{ 'bg-green-500/20 text-green-400 border border-green-500/30' if fn.enabled else 'bg-red-500/20 text-red-400 border border-red-500/30' }}">
+                  {{ 'Enabled' if fn.enabled else 'Disabled' }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-gray-400 max-w-[26rem] break-words">{{ fn.description }}</td>
+              <td class="px-4 py-3">
+                <div class="flex gap-2 flex-wrap">
+                  <form method="post" action="/assistant/functions/toggle">
+                    <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                    <input type="hidden" name="function_id" value="{{ fn.id }}"/>
+                    <input type="hidden" name="enabled" value="{{ 0 if fn.enabled else 1 }}"/>
+                    <button class="btn-secondary text-xs py-1 px-3">{{ 'Disable' if fn.enabled else 'Enable' }}</button>
+                  </form>
+                  <form method="post" action="/assistant/functions/delete" onsubmit="return confirm('Delete this custom function?')">
+                    <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                    <input type="hidden" name="function_id" value="{{ fn.id }}"/>
+                    <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="px-4 py-10 text-center text-gray-500">No custom functions defined yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

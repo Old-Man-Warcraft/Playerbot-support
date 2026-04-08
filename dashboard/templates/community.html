@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Community Systems — Bot Dashboard{% endblock %}
+{% block header %}Community Systems{% endblock %}
+
+{% block content %}
+<div class="flex flex-col xl:flex-row gap-6">
+  <div class="w-full xl:w-64 flex-shrink-0">
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-3">Select Guild</h3>
+      <div class="space-y-1">
+        {% for g in guilds %}
+        <a href="/community?guild_id={{ g.guild_id }}"
+           class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {% if guild_id == g.guild_id %}bg-[#5865F2]/20 text-white border border-[#5865F2]/30{% else %}text-gray-400 hover:bg-gray-800 hover:text-white{% endif %}"
+           style="text-decoration:none;">
+          <i class="fa fa-server text-xs"></i>
+          <span class="font-mono">{{ g.guild_id }}</span>
+        </a>
+        {% else %}
+        <p class="text-gray-500 text-xs text-center py-4">No guilds found</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="flex-1 min-w-0 space-y-6">
+    {% if not guild_id %}
+    <div class="card p-12 text-center">
+      <i class="fa fa-users text-4xl text-gray-700 mb-3"></i>
+      <p class="text-gray-400">Select a guild to manage self-roles, highlights, and starboard behavior.</p>
+    </div>
+    {% else %}
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="card p-4"><p class="text-xs text-gray-500">Self-roles</p><p class="text-xl font-semibold text-white">{{ selfroles|length }}</p></div>
+      <div class="card p-4"><p class="text-xs text-gray-500">Highlight keywords</p><p class="text-xl font-semibold text-white">{{ highlights|length }}</p></div>
+      <div class="card p-4"><p class="text-xs text-gray-500">Starboard posts</p><p class="text-xl font-semibold text-white">{{ starboard_entries|length }}</p></div>
+      <div class="card p-4"><p class="text-xs text-gray-500">Starboard</p><p class="text-xl font-semibold {{ 'text-green-400' if config_values.get('starboard_enabled', '1') != '0' else 'text-red-400' }}">{{ 'Enabled' if config_values.get('starboard_enabled', '1') != '0' else 'Disabled' }}</p></div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-white">Self-assignable roles</h2>
+          <span class="text-xs text-gray-500">Panel can still be posted in Discord</span>
+        </div>
+        <form method="post" action="/community/selfroles/add" class="flex gap-3 items-end mb-4">
+          <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+          <div class="flex-1">
+            <label class="text-xs text-gray-500 mb-1 block">Role ID</label>
+            <input class="input" type="number" name="role_id" placeholder="123456789012345678" required/>
+          </div>
+          <button class="btn-primary" type="submit"><i class="fa fa-plus"></i> Add</button>
+        </form>
+        <div class="space-y-2 max-h-[20rem] overflow-y-auto">
+          {% for row in selfroles %}
+          <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+            <span class="text-sm text-gray-200 font-mono">{{ row.role_id }}</span>
+            <form method="post" action="/community/selfroles/delete" onsubmit="return confirm('Remove this self-role?')">
+              <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+              <input type="hidden" name="role_id" value="{{ row.role_id }}"/>
+              <button class="btn-danger"><i class="fa fa-trash"></i></button>
+            </form>
+          </div>
+          {% else %}
+          <p class="text-sm text-gray-500 text-center py-8">No self-roles configured.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-white">Highlight subscriptions</h2>
+          <span class="text-xs text-gray-500">Admin view across the whole guild</span>
+        </div>
+        <form method="post" action="/community/highlights/add" class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 mb-4 items-end">
+          <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">User ID</label>
+            <input class="input" type="number" name="user_id" placeholder="123456789012345678" required/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Keyword</label>
+            <input class="input" type="text" name="keyword" placeholder="release notes" required/>
+          </div>
+          <button class="btn-primary" type="submit"><i class="fa fa-plus"></i> Add</button>
+        </form>
+        <div class="space-y-2 max-h-[24rem] overflow-y-auto">
+          {% for row in highlights %}
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <p class="text-sm text-gray-200 font-mono">User {{ row.user_id }}</p>
+                <p class="text-xs text-gray-400 mt-1">Keyword: <code>{{ row.keyword }}</code></p>
+                <p class="text-xs mt-1 {{ 'text-yellow-400' if row.paused == '1' else 'text-green-400' }}">{{ 'Paused' if row.paused == '1' else 'Active' }}</p>
+              </div>
+              <div class="flex gap-2 flex-wrap">
+                <form method="post" action="/community/highlights/toggle-pause">
+                  <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                  <input type="hidden" name="user_id" value="{{ row.user_id }}"/>
+                  <input type="hidden" name="paused" value="{{ 0 if row.paused == '1' else 1 }}"/>
+                  <button class="btn-secondary text-xs py-1 px-3">{{ 'Resume' if row.paused == '1' else 'Pause' }}</button>
+                </form>
+                <form method="post" action="/community/highlights/delete" onsubmit="return confirm('Delete this highlight?')">
+                  <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                  <input type="hidden" name="user_id" value="{{ row.user_id }}"/>
+                  <input type="hidden" name="keyword" value="{{ row.keyword }}"/>
+                  <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <p class="text-sm text-gray-500 text-center py-8">No highlights configured.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">Starboard configuration</h2>
+          <p class="text-sm text-gray-500">Adjust live starboard behavior and review recently featured messages.</p>
+        </div>
+        <a href="/config?guild_id={{ guild_id }}" class="btn-secondary" style="text-decoration:none;">
+          <i class="fa fa-sliders"></i> Full guild settings
+        </a>
+      </div>
+
+      <form method="post" action="/community/starboard/save" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mb-6 items-end">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Enabled</label>
+          <select class="input" name="starboard_enabled">
+            <option value="1" {% if config_values.get('starboard_enabled', '1') != '0' %}selected{% endif %}>Enabled</option>
+            <option value="0" {% if config_values.get('starboard_enabled', '1') == '0' %}selected{% endif %}>Disabled</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Channel ID</label>
+          <input class="input" type="text" name="starboard_channel" value="{{ config_values.get('starboard_channel', '') }}" placeholder="123456789012345678"/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Threshold</label>
+          <input class="input" type="number" min="1" name="starboard_threshold" value="{{ config_values.get('starboard_threshold', '3') }}"/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Emoji</label>
+          <input class="input" type="text" name="starboard_emoji" value="{{ config_values.get('starboard_emoji', '⭐') }}" placeholder="⭐"/>
+        </div>
+        <button class="btn-primary" type="submit"><i class="fa fa-save"></i> Save</button>
+        <div class="md:col-span-2 xl:col-span-5">
+          <label class="text-xs text-gray-500 mb-1 block">Ignored channel IDs</label>
+          <textarea class="input resize-y" rows="2" name="starboard_ignore_channels" placeholder="123456789012345678, 987654321098765432">{{ config_values.get('starboard_ignore_channels', '') }}</textarea>
+        </div>
+      </form>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 text-xs border-b border-gray-800">
+              <th class="px-4 py-3 font-medium">Message</th>
+              <th class="px-4 py-3 font-medium">Source Channel</th>
+              <th class="px-4 py-3 font-medium">Author</th>
+              <th class="px-4 py-3 font-medium">Stars</th>
+              <th class="px-4 py-3 font-medium">Starboard Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in starboard_entries %}
+            <tr class="table-row">
+              <td class="px-4 py-3 text-gray-300 font-mono text-xs">{{ row.message_id }}</td>
+              <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ row.channel_id }}</td>
+              <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ row.author_id }}</td>
+              <td class="px-4 py-3 text-yellow-400 font-semibold">{{ row.star_count }}</td>
+              <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ row.starboard_msg_id or '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="px-4 py-10 text-center text-gray-500">No starboard entries recorded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
