@@ -727,7 +727,22 @@ async def integrations_github_save(
 async def integrations_github_delete(request: Request, guild_id: int = Form(...), subscription_id: int = Form(...)):
     if r := auth_redirect(request):
         return r
-    await db_execute("DELETE FROM github_subscriptions WHERE id = ? AND guild_id = ?", (subscription_id, guild_id))
+    row = await db_fetchone(
+        "SELECT repo FROM github_subscriptions WHERE id = ? AND guild_id = ?",
+        (subscription_id, guild_id),
+    )
+    deleted = await db_execute(
+        "DELETE FROM github_subscriptions WHERE id = ? AND guild_id = ?",
+        (subscription_id, guild_id),
+    )
+    repo = row["repo"] if row else None
+    if deleted and repo:
+        remaining = await db_fetchone(
+            "SELECT COUNT(*) AS c FROM github_subscriptions WHERE repo = ?",
+            (repo,),
+        )
+        if not remaining or remaining["c"] == 0:
+            await db_execute("DELETE FROM github_poll_state WHERE repo = ?", (repo,))
     return RedirectResponse(f"/integrations?guild_id={guild_id}", status_code=302)
 
 

@@ -1593,6 +1593,17 @@ class Database:
             "DELETE FROM github_subscriptions WHERE guild_id = ? AND channel_id = ? AND repo = ?",
             (guild_id, channel_id, repo),
         )
+        if cur.rowcount > 0:
+            remaining_cur = await self.conn.execute(
+                "SELECT COUNT(*) AS c FROM github_subscriptions WHERE repo = ?",
+                (repo,),
+            )
+            remaining = await remaining_cur.fetchone()
+            if not remaining or remaining["c"] == 0:
+                await self.conn.execute(
+                    "DELETE FROM github_poll_state WHERE repo = ?",
+                    (repo,),
+                )
         await self.conn.commit()
         return cur.rowcount > 0
 

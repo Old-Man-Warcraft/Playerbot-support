@@ -385,6 +385,11 @@ class GitHubCog(commands.Cog, name="GitHub"):
 
         newest_id = str(events[0].get("id", ""))
 
+        if state is None:
+            await self.db.set_github_poll_state(repo, "events", newest_id, new_etag)
+            logger.info("GitHub poller bootstrap for %s — seeded latest event %s", repo, newest_id)
+            return
+
         # Collect new events (stop at last_id)
         new_events: list[dict] = []
         for ev in events:
