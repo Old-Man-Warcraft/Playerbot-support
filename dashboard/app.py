@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import aiosqlite
-from fastapi import FastAPI, Request, Response, HTTPException, Depends, Form
+import httpx
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -764,32 +765,69 @@ async def reminders_delete(request: Request, reminder_id: int = Form(...), guild
 
 
 # ---------------------------------------------------------------------------
-# Knowledge base / embeddings
+# Knowledge base / embeddings + Training + Learned facts + Feedback
 # ---------------------------------------------------------------------------
 
 @app.get("/knowledge", response_class=HTMLResponse)
-async def knowledge_page(request: Request, guild_id: int | None = None):
+async def knowledge_page(request: Request, guild_id: int | None = None, tab: str = "crawl"):
     if r := auth_redirect(request):
         return r
 
     guilds = await db_fetchall("SELECT DISTINCT guild_id FROM guild_config ORDER BY guild_id")
     entries = []
     sources = []
+    learned_facts = []
+    feedback_stats: dict = {"total": 0, "positive": 0, "negative": 0}
+    recent_negative: list = []
+
     if guild_id:
         entries = await db_fetchall(
-            "SELECT id, name, model, source_url, created_at, LENGTH(text) as text_len FROM embeddings WHERE guild_id = ? ORDER BY name",
+            "SELECT id, name, model, source_url, created_at, LENGTH(text) as text_len "
+            "FROM embeddings WHERE guild_id = ? ORDER BY name",
             (guild_id,),
         )
         sources = await db_fetchall(
             "SELECT * FROM crawl_sources WHERE guild_id = ? ORDER BY crawled_at DESC",
             (guild_id,),
         )
+        try:
+            learned_facts = await db_fetchall(
+                "SELECT id, fact, source, confidence, approved, created_at "
+                "FROM learned_facts WHERE guild_id = ? ORDER BY id DESC",
+                (guild_id,),
+            )
+        except Exception:
+            learned_facts = []
+        try:
+            row = await db_fetchone(
+                "SELECT COUNT(*) as total, "
+                "COALESCE(SUM(CASE WHEN rating=1 THEN 1 ELSE 0 END),0) as positive, "
+                "COALESCE(SUM(CASE WHEN rating=-1 THEN 1 ELSE 0 END),0) as negative "
+                "FROM response_feedback WHERE guild_id = ?",
+                (guild_id,),
+            )
+            if row:
+                feedback_stats = dict(row)
+        except Exception:
+            pass
+        try:
+            recent_negative = await db_fetchall(
+                "SELECT user_input, bot_response, created_at FROM response_feedback "
+                "WHERE guild_id = ? AND rating = -1 ORDER BY created_at DESC LIMIT 10",
+                (guild_id,),
+            )
+        except Exception:
+            recent_negative = []
 
     return templates.TemplateResponse(request, "knowledge.html", ctx({
         "guilds": guilds,
         "guild_id": guild_id,
         "entries": entries,
         "sources": sources,
+        "learned_facts": learned_facts,
+        "feedback_stats": feedback_stats,
+        "recent_negative": recent_negative,
+        "active_tab": tab,
         "active_page": "knowledge",
     }))
 
@@ -798,8 +836,195 @@ async def knowledge_page(request: Request, guild_id: int | None = None):
 async def knowledge_delete(request: Request, entry_id: int = Form(...), guild_id: int = Form(...)):
     if r := auth_redirect(request):
         return r
+    row = await db_fetchone("SELECT qdrant_id FROM embeddings WHERE id = ? AND guild_id = ?", (entry_id, guild_id))
     await db_execute("DELETE FROM embeddings WHERE id = ? AND guild_id = ?", (entry_id, guild_id))
-    return RedirectResponse(f"/knowledge?guild_id={guild_id}", status_code=302)
+    if row and row["qdrant_id"]:
+        from bot.qdrant_service import QdrantService
+        await QdrantService().delete_embedding(guild_id, row["qdrant_id"])
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=embeddings", status_code=302)
+
+
+@app.post("/knowledge/delete-source")
+async def knowledge_delete_source(request: Request, source_url: str = Form(...), guild_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM embeddings WHERE guild_id = ? AND source_url = ?", (guild_id, source_url))
+    await db_execute("DELETE FROM crawl_sources WHERE guild_id = ? AND url = ?", (guild_id, source_url))
+    from bot.qdrant_service import QdrantService
+    await QdrantService().delete_embeddings_by_source(guild_id, source_url)
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=crawl", status_code=302)
+
+
+@app.post("/knowledge/add-fact")
+async def knowledge_add_fact(request: Request, guild_id: int = Form(...), fact: str = Form(...), source: str = Form("training")):
+    if r := auth_redirect(request):
+        return r
+    try:
+        await db_execute(
+            "INSERT OR IGNORE INTO learned_facts (guild_id, fact, source) VALUES (?, ?, ?)",
+            (guild_id, fact.strip(), source),
+        )
+    except Exception:
+        pass
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=training", status_code=302)
+
+
+@app.post("/knowledge/delete-fact")
+async def knowledge_delete_fact(request: Request, fact_id: int = Form(...), guild_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM learned_facts WHERE id = ? AND guild_id = ?", (fact_id, guild_id))
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=training", status_code=302)
+
+
+@app.post("/knowledge/toggle-fact")
+async def knowledge_toggle_fact(request: Request, fact_id: int = Form(...), guild_id: int = Form(...), approved: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute(
+        "UPDATE learned_facts SET approved = ? WHERE id = ? AND guild_id = ?",
+        (approved, fact_id, guild_id),
+    )
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=training", status_code=302)
+
+
+@app.post("/knowledge/reset-facts")
+async def knowledge_reset_facts(request: Request, guild_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM learned_facts WHERE guild_id = ?", (guild_id,))
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=training", status_code=302)
+
+
+@app.post("/knowledge/reset-feedback")
+async def knowledge_reset_feedback(request: Request, guild_id: int = Form(...)):
+    if r := auth_redirect(request):
+        return r
+    await db_execute("DELETE FROM response_feedback WHERE guild_id = ?", (guild_id,))
+    return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=feedback", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# API: async crawl (JSON — called by dashboard JS)
+# ---------------------------------------------------------------------------
+
+# In-memory job store for crawl progress (keyed by job_id)
+_crawl_jobs: dict[str, dict] = {}
+
+
+async def _run_crawl(job_id: str, guild_id: int, url: str, max_pages: int, chunk_size: int, replace: bool) -> None:
+    """Background crawl task: fetches pages, embeds chunks, stores in Qdrant + SQLite metadata."""
+    import re as _re
+    import uuid as _uuid
+    from urllib.parse import urlparse as _up
+    from bot.crawler import WebCrawler
+    from bot.qdrant_service import QdrantService
+    from openai import AsyncOpenAI
+
+    job = _crawl_jobs[job_id]
+    job["status"] = "running"
+    stored = 0
+    pages = 0
+
+    # LLM client for embeddings
+    llm_client = AsyncOpenAI(
+        base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
+        api_key=os.getenv("LLM_API_KEY", ""),
+    )
+    # Use the guild's configured embedding model (fallback to a sensible default)
+    _emb_row = await db_fetchone(
+        "SELECT value FROM guild_config WHERE guild_id = ? AND key = 'assistant_embedding_model'",
+        (guild_id,),
+    )
+    emb_model = (_emb_row["value"] if _emb_row else None) or "qwen3-embedding-8b"
+    qdrant = QdrantService()
+
+    async def _embed(text: str) -> list[float] | None:
+        try:
+            resp = await llm_client.embeddings.create(model=emb_model, input=text)
+            return resp.data[0].embedding
+        except Exception:
+            return None
+
+    try:
+        crawler = WebCrawler(chunk_size=max(200, min(chunk_size, 4000)), max_pages=max_pages)
+        async for result in crawler.crawl_site(url, max_pages=max_pages, same_origin_only=True):
+            pages += 1
+            job["pages"] = pages
+            if replace:
+                await db_execute(
+                    "DELETE FROM embeddings WHERE guild_id = ? AND source_url = ?",
+                    (guild_id, result.url),
+                )
+                await db_execute(
+                    "DELETE FROM crawl_sources WHERE guild_id = ? AND url = ?",
+                    (guild_id, result.url),
+                )
+                await qdrant.delete_embeddings_by_source(guild_id, result.url)
+
+            _slug = _re.sub(r"[^a-z0-9]+", "-", _up(result.url).netloc + _up(result.url).path, flags=_re.IGNORECASE).strip("-")[:50]
+            prefix = f"{(result.title or '')[:30]}|{_slug}".strip("|") or _slug or "page"
+            for i, chunk in enumerate(result.chunks):
+                entry_name = f"{prefix} [{i+1}]"
+                point_id = str(_uuid.uuid4())
+                try:
+                    await db_execute(
+                        "INSERT OR REPLACE INTO embeddings (guild_id, name, text, source_url, qdrant_id) VALUES (?, ?, ?, ?, ?)",
+                        (guild_id, entry_name, chunk, result.url, point_id),
+                    )
+                    stored += 1
+                except Exception as exc:
+                    logger.warning("DB insert failed for chunk %d: %s", i, exc)
+                    continue
+                vec = await _embed(chunk)
+                if vec:
+                    await qdrant.upsert_embedding(guild_id, point_id, vec, entry_name, chunk, emb_model, source_url=result.url)
+            # Upsert crawl_source record
+            try:
+                await db_execute(
+                    "INSERT INTO crawl_sources (guild_id, url, title, chunk_count) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(guild_id, url) DO UPDATE SET title=excluded.title, chunk_count=excluded.chunk_count, crawled_at=datetime('now')",
+                    (guild_id, result.url, result.title or "", len(result.chunks)),
+                )
+            except Exception:
+                pass
+            job["chunks"] = stored
+        job["status"] = "done"
+        job["chunks"] = stored
+        job["pages"] = pages
+    except Exception as exc:
+        job["status"] = "error"
+        job["error"] = str(exc)
+        logger.exception("Crawl job %s failed", job_id)
+
+
+@app.post("/api/crawl/start")
+async def api_crawl_start(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    guild_id: int = Form(...),
+    url: str = Form(...),
+    max_pages: int = Form(10),
+    chunk_size: int = Form(800),
+    replace: bool = Form(True),
+):
+    if r := auth_redirect(request):
+        return r
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
+    _crawl_jobs[job_id] = {"status": "queued", "pages": 0, "chunks": 0, "error": None}
+    background_tasks.add_task(_run_crawl, job_id, guild_id, url, max_pages, chunk_size, replace)
+    return JSONResponse({"job_id": job_id})
+
+
+@app.get("/api/crawl/status/{job_id}")
+async def api_crawl_status(request: Request, job_id: str):
+    if not request.session.get("authenticated"):
+        raise HTTPException(401)
+    job = _crawl_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return JSONResponse(job)
 
 
 # ---------------------------------------------------------------------------

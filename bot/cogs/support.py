@@ -8,6 +8,7 @@ placeholders, per-channel prompts, token usage tracking, and full admin config.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -22,6 +23,8 @@ from discord.ext import commands
 if TYPE_CHECKING:
     from bot.database import Database
     from bot.llm_service import LLMService
+
+from bot.qdrant_service import QdrantService
 
 from bot.config import DEFAULTS
 from bot.crawler import WebCrawler
@@ -92,6 +95,85 @@ def _embed_from_dict(data: dict) -> discord.Embed:
 
 
 # ---------------------------------------------------------------------------
+# Feedback UI
+# ---------------------------------------------------------------------------
+
+def _make_feedback_ctx(
+    interaction: discord.Interaction,
+    user_input: str,
+    result: dict[str, Any],
+) -> dict | None:
+    """Build a feedback context dict from an interaction + result, or None if no guild."""
+    if not interaction.guild or not interaction.channel:
+        return None
+    return {
+        "guild_id": interaction.guild.id,
+        "channel_id": interaction.channel.id,
+        "user_id": interaction.user.id,
+        "message_id": None,
+        "user_input": user_input[:1000],
+        "bot_response": result.get("content", "")[:1000],
+    }
+
+
+def _make_feedback_ctx_from_message(
+    message: discord.Message,
+    result: dict[str, Any],
+) -> dict | None:
+    """Build a feedback context dict from a Message object, or None if no guild."""
+    if not message.guild or not message.channel:
+        return None
+    return {
+        "guild_id": message.guild.id,
+        "channel_id": message.channel.id,
+        "user_id": message.author.id,
+        "message_id": None,
+        "user_input": message.content[:1000],
+        "bot_response": result.get("content", "")[:1000],
+    }
+
+
+class FeedbackView(discord.ui.View):
+    """Thumbs-up / thumbs-down buttons attached to bot replies."""
+
+    def __init__(self, db: Any, ctx: dict | None) -> None:
+        super().__init__(timeout=300)
+        self._db = db
+        self._ctx = ctx or {}
+
+    async def _record(self, interaction: discord.Interaction, rating: int) -> None:
+        ctx = self._ctx
+        guild_id = ctx.get("guild_id") or (interaction.guild.id if interaction.guild else 0)
+        channel_id = ctx.get("channel_id") or (interaction.channel.id if interaction.channel else 0)
+        user_id = interaction.user.id
+        message_id = ctx.get("message_id") or interaction.message.id if interaction.message else 0
+
+        ok = await self._db.add_feedback(
+            guild_id,
+            channel_id,
+            user_id,
+            message_id,
+            rating,
+            user_input=ctx.get("user_input"),
+            bot_response=ctx.get("bot_response"),
+        )
+        if ok:
+            label = "👍 Thanks for the positive feedback!" if rating == 1 else "👎 Thanks, I'll try to do better!"
+        else:
+            label = "You already rated this response."
+        await interaction.response.send_message(label, ephemeral=True)
+        self.stop()
+
+    @discord.ui.button(label="👍", style=discord.ButtonStyle.success, custom_id="fb_pos")
+    async def thumbs_up(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._record(interaction, 1)
+
+    @discord.ui.button(label="👎", style=discord.ButtonStyle.danger, custom_id="fb_neg")
+    async def thumbs_down(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._record(interaction, -1)
+
+
+# ---------------------------------------------------------------------------
 # Cog
 # ---------------------------------------------------------------------------
 
@@ -99,11 +181,12 @@ class SupportCog(commands.Cog, name="Support"):
     """AI-powered assistant with conversation memory, RAG, function calling, and more."""
 
     def __init__(
-        self, bot: commands.Bot, db: "Database", llm: "LLMService"
+        self, bot: commands.Bot, db: "Database", llm: "LLMService", qdrant: QdrantService | None = None
     ) -> None:
         self.bot = bot
         self.db = db
         self.llm = llm
+        self.qdrant: QdrantService = qdrant or QdrantService()
         self._processing_messages: set[int] = set()
         # Context menu: right-click message → "Ask AI about this"
         self._ask_ctx = app_commands.ContextMenu(name="Ask AI", callback=self._ask_context_menu)
@@ -178,7 +261,7 @@ class SupportCog(commands.Cog, name="Support"):
     # ------------------------------------------------------------------
 
     async def _get_rag_context(self, guild_id: int, query: str, top_n: int = 5) -> str:
-        """Retrieve the top-N most relevant embeddings for a query."""
+        """Retrieve the top-N most relevant embeddings + learned facts for a query."""
         try:
             emb_model = await self._get_embedding_model(guild_id)
             query_vec, _ = await self.llm.create_embedding(query, model=emb_model)
@@ -186,24 +269,72 @@ class SupportCog(commands.Cog, name="Support"):
             logger.warning("Embedding creation failed for RAG query")
             return ""
 
-        all_embeds = await self.db.get_all_embeddings(guild_id)
-        scored: list[tuple[float, str]] = []
         min_rel_str = await self.db.get_guild_config(guild_id, "assistant_relatedness")
         min_rel = float(min_rel_str) if min_rel_str else 0.3
 
-        for row in all_embeds:
-            if not row["embedding"]:
-                continue
-            stored_vec = self.llm.unpack_embedding(row["embedding"])
-            sim = self.llm.similarity(query_vec, stored_vec)
-            if sim >= min_rel:
-                scored.append((sim, row["text"]))
+        knowledge_chunks: list[str] = []
+        learned_chunks: list[str] = []
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        if not scored:
-            return ""
-        chunks = [text for _, text in scored[:top_n]]
-        return "Relevant knowledge:\n" + "\n---\n".join(chunks)
+        # Search knowledge base in Qdrant
+        kb_hits = await self.qdrant.search_embeddings(guild_id, query_vec, top_n=top_n, score_threshold=min_rel)
+        for hit in kb_hits:
+            knowledge_chunks.append(hit["text"])
+
+        # Search learned facts (only if learning is enabled)
+        learning_enabled = await self.db.get_guild_config(guild_id, "assistant_learning_enabled")
+        if learning_enabled != "0":
+            # Use a higher threshold for learned facts to avoid injecting loosely-related past exchanges
+            fact_threshold = max(min_rel, 0.55)
+            fact_hits = await self.qdrant.search_facts(guild_id, query_vec, top_n=top_n, score_threshold=fact_threshold)
+            for hit in fact_hits:
+                learned_chunks.append(hit["fact"])
+
+        parts: list[str] = []
+        if knowledge_chunks:
+            parts.append("Relevant knowledge base entries:\n" + "\n---\n".join(knowledge_chunks))
+        if learned_chunks:
+            parts.append(
+                "Background facts (for informational reference only — do NOT mirror the style or "
+                "format of past conversations; always respond naturally to the current request):\n"
+                + "\n---\n".join(learned_chunks)
+            )
+        return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Internal: adaptive learning helper
+    # ------------------------------------------------------------------
+
+    async def _learn_from_exchange(
+        self,
+        guild_id: int,
+        user_message: str,
+        assistant_reply: str,
+        model: str,
+        emb_model: str,
+    ) -> None:
+        """Extract facts from a Q&A exchange and persist them. Runs as a background task."""
+        try:
+            facts = await self.llm.extract_facts(
+                user_message, assistant_reply, model=model
+            )
+            for fact in facts:
+                try:
+                    vec, _ = await self.llm.create_embedding(fact, model=emb_model)
+                except Exception:
+                    vec = None
+                # Keep metadata in SQLite
+                await self.db.add_learned_fact(
+                    guild_id, fact, None, emb_model, source="conversation"
+                )
+                # Store vector in Qdrant
+                if vec:
+                    import uuid as _uuid
+                    point_id = str(_uuid.uuid4())
+                    await self.qdrant.upsert_fact(guild_id, point_id, vec, fact, source="conversation")
+            if facts:
+                logger.debug("Learned %d fact(s) for guild %d", len(facts), guild_id)
+        except Exception:
+            logger.debug("Background learning failed (non-critical)", exc_info=True)
 
     # ------------------------------------------------------------------
     # Internal: full chat pipeline
@@ -282,27 +413,55 @@ class SupportCog(commands.Cog, name="Support"):
                 usage.get("completion_tokens", 0),
             )
 
+        # Adaptive learning: fire-and-forget background fact extraction
+        if guild and content:
+            learning_enabled = await self.db.get_guild_config(guild_id, "assistant_learning_enabled")
+            if learning_enabled != "0":
+                emb_model = await self._get_embedding_model(guild_id)
+                asyncio.ensure_future(
+                    self._learn_from_exchange(guild_id, question, content, model, emb_model)
+                )
+
         return result
 
     async def _send_result(
         self,
         send_func,
         result: dict[str, Any],
+        *,
+        feedback_ctx: dict | None = None,
     ) -> None:
-        """Send the LLM result (text + embeds) via a send-like callable."""
+        """Send the LLM result (text + embeds) via a send-like callable.
+
+        If *feedback_ctx* is provided (keys: guild_id, channel_id, user_id,
+        user_input, bot_response), a thumbs-up/down view is attached to the
+        first message so users can rate the response.
+        """
         content = result.get("content", "")
         embeds_data = result.get("embeds", [])
 
         discord_embeds = [_embed_from_dict(e) for e in embeds_data]
+        view = FeedbackView(self.db, feedback_ctx) if feedback_ctx else discord.utils.MISSING
 
         if content:
             chunks = _split(content)
             first_embeds = discord_embeds[:10] if discord_embeds else []
-            await send_func(chunks[0], embeds=first_embeds or discord.utils.MISSING)
+            msg = await send_func(
+                chunks[0],
+                embeds=first_embeds or discord.utils.MISSING,
+                view=view,
+            )
+            if feedback_ctx and msg:
+                try:
+                    mid = msg.id if hasattr(msg, "id") else None
+                    if mid:
+                        feedback_ctx["message_id"] = mid
+                except Exception:
+                    pass
             for chunk in chunks[1:]:
                 await send_func(chunk)
         elif discord_embeds:
-            await send_func(embeds=discord_embeds[:10])
+            await send_func(embeds=discord_embeds[:10], view=view)
         else:
             await send_func("I couldn't generate a response.")
 
@@ -335,7 +494,8 @@ class SupportCog(commands.Cog, name="Support"):
             file = discord.File(fp=__import__("io").BytesIO(content.encode()), filename=outputfile)
             await interaction.followup.send(file=file)
         else:
-            await self._send_result(interaction.followup.send, result)
+            fctx = _make_feedback_ctx(interaction, question, result)
+            await self._send_result(interaction.followup.send, result, feedback_ctx=fctx)
 
     # Keep /ask as an alias
     @app_commands.command(name="ask", description="Ask the AI a question (alias for /chat)")
@@ -348,7 +508,8 @@ class SupportCog(commands.Cog, name="Support"):
         result = await self._do_chat(
             interaction.guild, interaction.channel, interaction.user, question  # type: ignore[arg-type]
         )
-        await self._send_result(interaction.followup.send, result)
+        fctx = _make_feedback_ctx(interaction, question, result)
+        await self._send_result(interaction.followup.send, result, feedback_ctx=fctx)
 
     # Context menu: Ask AI about a message
     async def _ask_context_menu(self, interaction: discord.Interaction, message: discord.Message) -> None:
@@ -555,14 +716,17 @@ class SupportCog(commands.Cog, name="Support"):
         guild_id = interaction.guild.id  # type: ignore[union-attr]
         emb_model = await self._get_embedding_model(guild_id)
         try:
-            _, packed = await self.llm.create_embedding(text, model=emb_model)
-            model = emb_model
+            vec, _ = await self.llm.create_embedding(text, model=emb_model)
         except Exception:
-            packed, model = None, None
+            vec = None
             logger.warning("Embedding creation failed — storing without vector")
 
-        ok = await self.db.add_embedding(guild_id, name, text, packed, model)
+        import uuid as _uuid
+        point_id = str(_uuid.uuid4())
+        ok = await self.db.add_embedding(guild_id, name, text, None, emb_model, qdrant_id=point_id)
         if ok:
+            if vec:
+                await self.qdrant.upsert_embedding(guild_id, point_id, vec, name, text, emb_model)
             await interaction.followup.send(f"✅ Embedding **{name}** added.")
         else:
             await interaction.followup.send(f"An embedding named **{name}** already exists. Use `/embeddings update`.")
@@ -574,19 +738,26 @@ class SupportCog(commands.Cog, name="Support"):
         guild_id = interaction.guild.id  # type: ignore[union-attr]
         emb_model = await self._get_embedding_model(guild_id)
         try:
-            _, packed = await self.llm.create_embedding(text, model=emb_model)
-            model = emb_model
+            vec, _ = await self.llm.create_embedding(text, model=emb_model)
         except Exception:
-            packed, model = None, None
+            vec = None
 
-        ok = await self.db.update_embedding(guild_id, name, text, packed, model)
+        import uuid as _uuid
+        point_id = str(_uuid.uuid4())
+        ok = await self.db.update_embedding(guild_id, name, text, None, emb_model, qdrant_id=point_id)
+        if ok and vec:
+            await self.qdrant.upsert_embedding(guild_id, point_id, vec, name, text, emb_model)
         msg = f"✅ Updated **{name}**." if ok else f"No embedding named **{name}** found."
         await interaction.followup.send(msg)
 
     @embed_group.command(name="remove", description="Remove a knowledge entry")
     @app_commands.describe(name="Name of the entry to delete")
     async def embed_remove(self, interaction: discord.Interaction, name: str) -> None:
-        ok = await self.db.delete_embedding(interaction.guild.id, name)  # type: ignore[union-attr]
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        row = await self.db.get_embedding_by_name(guild_id, name)
+        ok = await self.db.delete_embedding(guild_id, name)
+        if ok and row and row.get("qdrant_id"):
+            await self.qdrant.delete_embedding(guild_id, row["qdrant_id"])
         msg = f"🗑️ Removed **{name}**." if ok else f"No embedding named **{name}**."
         await interaction.response.send_message(msg, ephemeral=True)
 
@@ -597,8 +768,9 @@ class SupportCog(commands.Cog, name="Support"):
             await interaction.response.send_message("No embeddings stored.", ephemeral=True)
             return
         lines = [f"**{r['name']}** — {len(r['text'])} chars" for r in rows]
+        qdrant_count = await self.qdrant.count_embeddings(interaction.guild.id)  # type: ignore[union-attr]
         em = discord.Embed(
-            title=f"📚 Knowledge Base ({len(rows)} entries)",
+            title=f"📚 Knowledge Base ({len(rows)} entries, {qdrant_count} vectors)",
             description="\n".join(lines)[:4000],
             color=discord.Color.teal(),
         )
@@ -606,8 +778,10 @@ class SupportCog(commands.Cog, name="Support"):
 
     @embed_group.command(name="reset", description="Delete ALL knowledge entries for this server")
     async def embed_reset(self, interaction: discord.Interaction) -> None:
-        count = await self.db.reset_embeddings(interaction.guild.id)  # type: ignore[union-attr]
-        await self.db.reset_crawl_sources(interaction.guild.id)  # type: ignore[union-attr]
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        count = await self.db.reset_embeddings(guild_id)
+        await self.db.reset_crawl_sources(guild_id)
+        await self.qdrant.reset_embeddings(guild_id)
         await interaction.response.send_message(f"🗑️ Deleted {count} embedding(s) and all crawl sources.", ephemeral=True)
 
     @embed_group.command(name="crawl", description="Fetch a URL, chunk it, and store in the RAG knowledge base")
@@ -636,26 +810,29 @@ class SupportCog(commands.Cog, name="Support"):
             return
 
         if replace:
-            removed = await self.db.delete_embeddings_by_source(guild_id, result.url)
-            if removed:
-                await self.db.delete_crawl_source(guild_id, result.url)
+            await self.db.delete_embeddings_by_source(guild_id, result.url)
+            await self.db.delete_crawl_source(guild_id, result.url)
+            await self.qdrant.delete_embeddings_by_source(guild_id, result.url)
 
         _slug = re.sub(r"[^a-z0-9]+", "-", _urlparse(result.url).netloc + _urlparse(result.url).path, flags=re.IGNORECASE).strip("-")[:50]
         prefix = name_prefix or f"{result.title[:30]}|{_slug}" or _slug or "page"
         emb_model = await self._get_embedding_model(guild_id)
         stored = 0
+        import uuid as _uuid
         for i, chunk in enumerate(result.chunks):
             entry_name = f"{prefix} [{i+1}]"
+            point_id = str(_uuid.uuid4())
             try:
-                _, packed = await self.llm.create_embedding(chunk, model=emb_model)
-                model_used = emb_model
+                vec, _ = await self.llm.create_embedding(chunk, model=emb_model)
             except Exception:
-                packed, model_used = None, None
+                vec = None
                 logger.warning("Embedding creation failed for chunk %d of %s", i, url)
 
-            ok = await self.db.add_embedding(guild_id, entry_name, chunk, packed, model_used, source_url=result.url)
+            ok = await self.db.add_embedding(guild_id, entry_name, chunk, None, emb_model, source_url=result.url, qdrant_id=point_id)
             if not ok:
-                await self.db.update_embedding(guild_id, entry_name, chunk, packed, model_used, source_url=result.url)
+                await self.db.update_embedding(guild_id, entry_name, chunk, None, emb_model, source_url=result.url, qdrant_id=point_id)
+            if vec:
+                await self.qdrant.upsert_embedding(guild_id, point_id, vec, entry_name, chunk, emb_model, source_url=result.url)
             stored += 1
 
         if stored:
@@ -707,22 +884,26 @@ class SupportCog(commands.Cog, name="Support"):
             if replace:
                 await self.db.delete_embeddings_by_source(guild_id, result.url)
                 await self.db.delete_crawl_source(guild_id, result.url)
+                await self.qdrant.delete_embeddings_by_source(guild_id, result.url)
 
             _slug = re.sub(r"[^a-z0-9]+", "-", _urlparse(result.url).netloc + _urlparse(result.url).path, flags=re.IGNORECASE).strip("-")[:50]
             prefix = f"{result.title[:30]}|{_slug}" or _slug or "page"
             stored = 0
+            import uuid as _uuid
             for i, chunk in enumerate(result.chunks):
                 entry_name = f"{prefix} [{i+1}]"
+                point_id = str(_uuid.uuid4())
                 try:
-                    _, packed = await self.llm.create_embedding(chunk, model=emb_model)
-                    model_used = emb_model
+                    vec, _ = await self.llm.create_embedding(chunk, model=emb_model)
                 except Exception:
-                    packed, model_used = None, None
+                    vec = None
                     errors += 1
 
-                ok = await self.db.add_embedding(guild_id, entry_name, chunk, packed, model_used, source_url=result.url)
+                ok = await self.db.add_embedding(guild_id, entry_name, chunk, None, emb_model, source_url=result.url, qdrant_id=point_id)
                 if not ok:
-                    await self.db.update_embedding(guild_id, entry_name, chunk, packed, model_used, source_url=result.url)
+                    await self.db.update_embedding(guild_id, entry_name, chunk, None, emb_model, source_url=result.url, qdrant_id=point_id)
+                if vec:
+                    await self.qdrant.upsert_embedding(guild_id, point_id, vec, entry_name, chunk, emb_model, source_url=result.url)
                 stored += 1
 
             if stored:
@@ -774,6 +955,7 @@ class SupportCog(commands.Cog, name="Support"):
         guild_id = interaction.guild.id  # type: ignore[union-attr]
         removed = await self.db.delete_embeddings_by_source(guild_id, url)
         await self.db.delete_crawl_source(guild_id, url)
+        await self.qdrant.delete_embeddings_by_source(guild_id, url)
         if removed:
             await interaction.followup.send(f"🗑️ Removed {removed} chunk(s) from `{url}`.")
         else:
@@ -792,21 +974,14 @@ class SupportCog(commands.Cog, name="Support"):
             await interaction.followup.send("⚠️ Failed to create embedding for query.")
             return
 
-        rows = await self.db.get_all_embeddings(interaction.guild.id)  # type: ignore[union-attr]
-        scored = []
-        for r in rows:
-            if not r["embedding"]:
-                continue
-            vec = self.llm.unpack_embedding(r["embedding"])
-            sim = self.llm.similarity(query_vec, vec)
-            scored.append((sim, r["name"], r["text"][:100]))
-        scored.sort(key=lambda x: x[0], reverse=True)
-
-        if not scored:
-            await interaction.followup.send("No embeddings with vectors found.")
+        hits = await self.qdrant.search_embeddings(
+            interaction.guild.id, query_vec, top_n=10, score_threshold=0.0  # type: ignore[union-attr]
+        )
+        if not hits:
+            await interaction.followup.send("No embeddings found in Qdrant for this guild.")
             return
 
-        lines = [f"**{name}** — `{sim:.4f}` — {preview}…" for sim, name, preview in scored[:10]]
+        lines = [f"**{h.get('name','?')}** — `{h['score']:.4f}` — {h.get('text','')[:100]}…" for h in hits]
         em = discord.Embed(title="🔍 Query Results", description="\n".join(lines)[:4000], color=discord.Color.green())
         await interaction.followup.send(embed=em)
 
@@ -1134,21 +1309,206 @@ class SupportCog(commands.Cog, name="Support"):
         finally:
             self._processing_messages.discard(message.id)
 
-        text = result.get("content", "")
-        embeds_data = result.get("embeds", [])
-        discord_embeds = [_embed_from_dict(e) for e in embeds_data]
-
         mention_enabled = await self.db.get_guild_config(guild_id, "assistant_mention")
         prefix = f"{message.author.mention} " if mention_enabled == "1" else ""
 
-        if text:
-            for i, chunk in enumerate(_split(text)):
-                kwargs: dict[str, Any] = {"content": (prefix + chunk) if i == 0 else chunk}
-                if i == 0 and discord_embeds:
-                    kwargs["embeds"] = discord_embeds[:10]
-                await message.channel.send(**kwargs)
-        elif discord_embeds:
-            await message.channel.send(content=prefix or None, embeds=discord_embeds[:10])
+        fctx = _make_feedback_ctx_from_message(message, result)
+
+        async def _send(content: str | None = None, **kwargs):
+            if content and prefix and not content.startswith(prefix):
+                content = prefix + content
+            return await message.channel.send(content=content, **kwargs)
+
+        await self._send_result(_send, result, feedback_ctx=fctx)
+
+    # ==================================================================
+    # /train — Manual knowledge training
+    # ==================================================================
+
+    train_group = app_commands.Group(
+        name="train", description="Teach the AI new knowledge",
+        default_permissions=discord.Permissions(manage_guild=True),
+    )
+
+    @train_group.command(name="fact", description="Teach the AI a single fact")
+    @app_commands.describe(fact="A clear, self-contained factual statement to store")
+    async def train_fact(self, interaction: discord.Interaction, fact: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        emb_model = await self._get_embedding_model(guild_id)
+        try:
+            _, packed = await self.llm.create_embedding(fact, model=emb_model)
+        except Exception:
+            packed = None
+        ok = await self.db.add_learned_fact(guild_id, fact, packed, emb_model, source="training")
+        if ok:
+            await interaction.followup.send(f"✅ Fact stored in knowledge base.")
+        else:
+            await interaction.followup.send("That exact fact is already in the knowledge base.")
+
+    @train_group.command(name="qa", description="Teach the AI by providing a question and answer pair")
+    @app_commands.describe(
+        question="The question",
+        answer="The correct answer",
+    )
+    async def train_qa(self, interaction: discord.Interaction, question: str, answer: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        emb_model = await self._get_embedding_model(guild_id)
+        fact = f"Q: {question}\nA: {answer}"
+        try:
+            _, packed = await self.llm.create_embedding(fact, model=emb_model)
+        except Exception:
+            packed = None
+        ok = await self.db.add_learned_fact(guild_id, fact, packed, emb_model, source="qa_pair")
+        if ok:
+            await interaction.followup.send(f"✅ Q&A pair stored.")
+        else:
+            await interaction.followup.send("An identical Q&A pair already exists.")
+
+    @train_group.command(name="text", description="Extract and store facts from a block of text")
+    @app_commands.describe(text="The text to extract knowledge from")
+    async def train_text(self, interaction: discord.Interaction, text: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        model = await self._get_model(guild_id)
+        emb_model = await self._get_embedding_model(guild_id)
+
+        facts = await self.llm.extract_facts(
+            "Please extract facts from the following text.", text, model=model, max_facts=10
+        )
+        if not facts:
+            await interaction.followup.send("No useful facts could be extracted from that text.")
+            return
+
+        stored = 0
+        for fact in facts:
+            try:
+                _, packed = await self.llm.create_embedding(fact, model=emb_model)
+            except Exception:
+                packed = None
+            if await self.db.add_learned_fact(guild_id, fact, packed, emb_model, source="training"):
+                stored += 1
+
+        em = discord.Embed(
+            title="🧠 Text Training Complete",
+            color=discord.Color.green(),
+        )
+        em.add_field(name="Facts extracted", value=str(len(facts)))
+        em.add_field(name="New facts stored", value=str(stored))
+        em.add_field(name="Duplicates skipped", value=str(len(facts) - stored))
+        if facts:
+            preview = "\n".join(f"• {f[:120]}" for f in facts[:5])
+            em.add_field(name="Sample facts", value=preview, inline=False)
+        await interaction.followup.send(embed=em)
+
+    @train_group.command(name="list", description="List stored learned facts")
+    @app_commands.describe(page="Page number (10 facts per page)")
+    async def train_list(self, interaction: discord.Interaction, page: int = 1) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        all_facts = await self.db.get_learned_facts(guild_id, approved_only=False)
+        if not all_facts:
+            await interaction.followup.send("No learned facts yet.")
+            return
+
+        per_page = 10
+        pages = max(1, (len(all_facts) + per_page - 1) // per_page)
+        page = max(1, min(page, pages))
+        start = (page - 1) * per_page
+        chunk = all_facts[start:start + per_page]
+
+        lines = []
+        for row in chunk:
+            status = "✅" if row["approved"] else "❌"
+            src = row["source"]
+            lines.append(f"`#{row['id']}` {status} [{src}] {row['fact'][:100]}")
+
+        em = discord.Embed(
+            title=f"🧠 Learned Facts (page {page}/{pages}, {len(all_facts)} total)",
+            description="\n".join(lines),
+            color=discord.Color.purple(),
+        )
+        await interaction.followup.send(embed=em)
+
+    @train_group.command(name="delete", description="Delete a learned fact by its ID")
+    @app_commands.describe(fact_id="The ID shown in /train list")
+    async def train_delete(self, interaction: discord.Interaction, fact_id: int) -> None:
+        ok = await self.db.delete_learned_fact(interaction.guild.id, fact_id)  # type: ignore[union-attr]
+        msg = f"🗑️ Fact `#{fact_id}` deleted." if ok else f"No fact with ID `#{fact_id}` found."
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @train_group.command(name="approve", description="Approve or hide a learned fact by ID")
+    @app_commands.describe(fact_id="The fact ID", approved="True to approve, False to hide")
+    async def train_approve(self, interaction: discord.Interaction, fact_id: int, approved: bool) -> None:
+        ok = await self.db.set_fact_approval(interaction.guild.id, fact_id, approved)  # type: ignore[union-attr]
+        if ok:
+            status = "approved ✅" if approved else "hidden ❌"
+            await interaction.response.send_message(f"Fact `#{fact_id}` is now **{status}**.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"No fact with ID `#{fact_id}`.", ephemeral=True)
+
+    @train_group.command(name="reset", description="Delete ALL learned facts for this server")
+    async def train_reset(self, interaction: discord.Interaction) -> None:
+        count = await self.db.reset_learned_facts(interaction.guild.id)  # type: ignore[union-attr]
+        await interaction.response.send_message(f"🗑️ Deleted {count} learned fact(s).", ephemeral=True)
+
+    # ==================================================================
+    # Learning & feedback management (in /assistant group)
+    # ==================================================================
+
+    @assist_group.command(name="togglelearning", description="Enable or disable adaptive learning from conversations")
+    async def assist_togglelearning(self, interaction: discord.Interaction) -> None:
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        current = await self.db.get_guild_config(guild_id, "assistant_learning_enabled")
+        new_val = "0" if current != "0" else "1"
+        await self.db.set_guild_config(guild_id, "assistant_learning_enabled", new_val)
+        status = "enabled" if new_val == "1" else "disabled"
+        await interaction.response.send_message(f"Adaptive learning **{status}**.", ephemeral=True)
+
+    @assist_group.command(name="learningstats", description="View learning and feedback stats")
+    async def assist_learningstats(self, interaction: discord.Interaction) -> None:
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        fact_count = await self.db.count_learned_facts(guild_id)
+        fb = await self.db.get_feedback_stats(guild_id)
+        learning_on = await self.db.get_guild_config(guild_id, "assistant_learning_enabled")
+
+        em = discord.Embed(title="🧠 Learning & Feedback Stats", color=discord.Color.purple())
+        em.add_field(name="Adaptive learning", value="Enabled" if learning_on != "0" else "Disabled")
+        em.add_field(name="Learned facts", value=str(fact_count))
+        em.add_field(name="Total ratings", value=str(fb["total"]))
+        em.add_field(name="👍 Positive", value=str(fb["positive"]))
+        em.add_field(name="👎 Negative", value=str(fb["negative"]))
+        total = fb["positive"] + fb["negative"]
+        if total:
+            pct = int(100 * fb["positive"] / total)
+            em.add_field(name="Satisfaction", value=f"{pct}%")
+        await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @assist_group.command(name="negativefeedback", description="Show recent negative-rated responses")
+    async def assist_negativefeedback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild.id  # type: ignore[union-attr]
+        rows = await self.db.get_negative_feedback(guild_id, limit=10)
+        if not rows:
+            await interaction.followup.send("No negative feedback recorded yet.")
+            return
+        lines = []
+        for row in rows:
+            q = (row["user_input"] or "")[:80]
+            a = (row["bot_response"] or "")[:80]
+            lines.append(f"**Q:** {q}\n**A:** {a}\n")
+        em = discord.Embed(
+            title=f"👎 Recent Negative Feedback ({len(rows)})",
+            description="\n".join(lines)[:4000],
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=em)
+
+    @assist_group.command(name="resetfeedback", description="Clear all feedback data for this server")
+    async def assist_resetfeedback(self, interaction: discord.Interaction) -> None:
+        count = await self.db.reset_feedback(interaction.guild.id)  # type: ignore[union-attr]
+        await interaction.response.send_message(f"🗑️ Deleted {count} feedback record(s).", ephemeral=True)
 
     # ==================================================================
     # /help_support — Full command reference
@@ -1184,12 +1544,25 @@ class SupportCog(commands.Cog, name="Support"):
             inline=False,
         )
         embed.add_field(
+            name="🧠 Training & Adaptive Learning",
+            value=(
+                "**/train fact** `<fact>` — Teach the AI a single fact\n"
+                "**/train qa** `<question>` `<answer>` — Teach via Q&A pair\n"
+                "**/train text** `<text>` — Auto-extract facts from a text block\n"
+                "**/train list** — Browse learned facts (paginated)\n"
+                "**/train delete** `<id>` · **/train approve** `<id>` `<bool>` · **/train reset**\n"
+                "Responses include 👍/👎 buttons — ratings are logged for review"
+            ),
+            inline=False,
+        )
+        embed.add_field(
             name="⚙️ Assistant Config (/assistant …)",
             value=(
                 "**toggle** · **model** · **temperature** · **maxtokens** · **maxretention**\n"
                 "**prompt** · **channelprompt** · **functioncalls** · **toggledraw**\n"
                 "**relatedness** · **listen** · **mention** · **trigger** · **triggerlist**\n"
-                "**usage** · **resetusage** · **resetconversations** · **view**"
+                "**usage** · **resetusage** · **resetconversations** · **view**\n"
+                "**togglelearning** · **learningstats** · **negativefeedback** · **resetfeedback**"
             ),
             inline=False,
         )

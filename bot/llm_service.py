@@ -343,6 +343,54 @@ class LLMService:
             return None
 
     # ------------------------------------------------------------------
+    # Fact extraction (adaptive learning)
+    # ------------------------------------------------------------------
+
+    async def extract_facts(
+        self,
+        user_message: str,
+        assistant_reply: str,
+        *,
+        model: str,
+        max_facts: int = 5,
+    ) -> list[str]:
+        """Extract discrete, reusable facts from a Q&A exchange.
+
+        Returns a list of short factual statements (empty list on failure
+        or when there is nothing worth learning).
+        """
+        instruction = (
+            "You are a knowledge extractor. Given a user question and an assistant reply, "
+            "extract up to {max} short, self-contained FACTUAL statements worth remembering. "
+            "Only extract facts about: the user's preferences or identity, server/community information, "
+            "or objective topic facts stated in the reply. "
+            "Do NOT extract anything about the assistant's tone, style, or how it responded. "
+            "Do NOT extract facts like 'the assistant told a story' or 'the assistant used a creative format'. "
+            "Each fact must be a single declarative sentence about the subject matter, not about the conversation itself. "
+            "Output ONLY a JSON array of strings, e.g. [\"Fact 1.\", \"Fact 2.\"]. "
+            "If there are no useful facts to extract, output an empty array []."
+        ).format(max=max_facts)
+
+        exchange = f"User: {user_message}\nAssistant: {assistant_reply}"
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": exchange},
+                ],
+                temperature=0.2,
+                max_tokens=512,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            facts = json.loads(raw)
+            if isinstance(facts, list):
+                return [str(f).strip() for f in facts if isinstance(f, str) and f.strip()]
+        except Exception:
+            logger.debug("Fact extraction failed (non-critical)", exc_info=True)
+        return []
+
+    # ------------------------------------------------------------------
     # Channel / TLDR summarisation
     # ------------------------------------------------------------------
 

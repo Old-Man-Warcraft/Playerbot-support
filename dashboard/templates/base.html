@@ -134,6 +134,17 @@
     <a href="/knowledge" class="sidebar-link {% if active_page == 'knowledge' %}active{% endif %}">
       <i class="fa fa-brain w-4 text-center"></i> Knowledge Base
     </a>
+
+    <p class="px-3 text-xs font-semibold text-gray-600 uppercase tracking-wider mt-4 mb-2">AI Training</p>
+    <a href="/knowledge?tab=crawl" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'crawl' %}active{% endif %}">
+      <i class="fa fa-spider w-4 text-center"></i> Web Crawler
+    </a>
+    <a href="/knowledge?tab=training" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'training' %}active{% endif %}">
+      <i class="fa fa-graduation-cap w-4 text-center"></i> Training
+    </a>
+    <a href="/knowledge?tab=feedback" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'feedback' %}active{% endif %}">
+      <i class="fa fa-star w-4 text-center"></i> Feedback
+    </a>
   </nav>
 
   <div class="px-3 py-4 border-t border-gray-800">

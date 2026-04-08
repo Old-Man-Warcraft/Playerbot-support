@@ -110,9 +110,10 @@ CREATE TABLE IF NOT EXISTS embeddings (
     guild_id    INTEGER NOT NULL,
     name        TEXT    NOT NULL,
     text        TEXT    NOT NULL,
-    embedding   BLOB,                   -- serialised float list
+    embedding   BLOB,                   -- kept for backwards compat (unused)
     model       TEXT,
     source_url  TEXT,                   -- origin URL if ingested via crawler
+    qdrant_id   TEXT,                   -- UUID key in Qdrant collection
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(guild_id, name)
 );
@@ -318,6 +319,36 @@ CREATE TABLE IF NOT EXISTS github_poll_state (
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (repo, event_type)
 );
+
+-- Adaptive learning: facts extracted from conversations and manual training
+CREATE TABLE IF NOT EXISTS learned_facts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    fact        TEXT    NOT NULL,
+    embedding   BLOB,                   -- serialised float list (same format as embeddings)
+    model       TEXT,
+    source      TEXT    NOT NULL DEFAULT 'conversation',  -- conversation | training | qa_pair
+    confidence  REAL    NOT NULL DEFAULT 1.0,
+    approved    INTEGER NOT NULL DEFAULT 1,               -- 1 = active, 0 = hidden
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, fact)
+);
+CREATE INDEX IF NOT EXISTS idx_facts_guild ON learned_facts (guild_id, approved);
+
+-- Response feedback: per-message thumbs up/down ratings
+CREATE TABLE IF NOT EXISTS response_feedback (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    message_id      INTEGER NOT NULL,   -- the bot's reply message_id
+    rating          INTEGER NOT NULL,   -- 1 = positive, -1 = negative
+    user_input      TEXT,               -- what the user asked
+    bot_response    TEXT,               -- what the bot replied
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_guild ON response_feedback (guild_id);
 """
 
 
@@ -345,6 +376,68 @@ class Database:
             await self._db.execute("ALTER TABLE embeddings ADD COLUMN source_url TEXT")  # type: ignore[union-attr]
             await self._db.commit()
             logger.info("Migration: added source_url column to embeddings")
+
+        # Create learned_facts table if missing (pre-existing DB)
+        await self._db.execute(  # type: ignore[union-attr]
+            """CREATE TABLE IF NOT EXISTS learned_facts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id    INTEGER NOT NULL,
+                fact        TEXT    NOT NULL,
+                embedding   BLOB,
+                model       TEXT,
+                source      TEXT    NOT NULL DEFAULT 'conversation',
+                confidence  REAL    NOT NULL DEFAULT 1.0,
+                approved    INTEGER NOT NULL DEFAULT 1,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(guild_id, fact)
+            )"""
+        )
+        await self._db.execute(  # type: ignore[union-attr]
+            "CREATE INDEX IF NOT EXISTS idx_facts_guild ON learned_facts (guild_id, approved)"
+        )
+        # Ensure embedding column exists (tables created before this column was added)
+        try:
+            await self._db.execute(  # type: ignore[union-attr]
+                "ALTER TABLE learned_facts ADD COLUMN embedding BLOB"
+            )
+        except Exception:
+            pass  # Column already exists
+        try:
+            await self._db.execute(  # type: ignore[union-attr]
+                "ALTER TABLE learned_facts ADD COLUMN model TEXT"
+            )
+        except Exception:
+            pass
+        await self._db.commit()  # type: ignore[union-attr]
+
+        # Add qdrant_id column to embeddings if missing
+        try:
+            await self._db.execute(  # type: ignore[union-attr]
+                "ALTER TABLE embeddings ADD COLUMN qdrant_id TEXT"
+            )
+            await self._db.commit()  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+        # Create response_feedback table if missing
+        await self._db.execute(  # type: ignore[union-attr]
+            """CREATE TABLE IF NOT EXISTS response_feedback (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id        INTEGER NOT NULL,
+                channel_id      INTEGER NOT NULL,
+                user_id         INTEGER NOT NULL,
+                message_id      INTEGER NOT NULL,
+                rating          INTEGER NOT NULL,
+                user_input      TEXT,
+                bot_response    TEXT,
+                created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(guild_id, message_id, user_id)
+            )"""
+        )
+        await self._db.execute(  # type: ignore[union-attr]
+            "CREATE INDEX IF NOT EXISTS idx_feedback_guild ON response_feedback (guild_id)"
+        )
+        await self._db.commit()  # type: ignore[union-attr]
 
     async def close(self) -> None:
         if self._db:
@@ -714,11 +807,12 @@ class Database:
         embedding: bytes | None,
         model: str | None,
         source_url: str | None = None,
+        qdrant_id: str | None = None,
     ) -> bool:
         try:
             await self.conn.execute(
-                "INSERT INTO embeddings (guild_id, name, text, embedding, model, source_url) VALUES (?, ?, ?, ?, ?, ?)",
-                (guild_id, name, text, embedding, model, source_url),
+                "INSERT INTO embeddings (guild_id, name, text, embedding, model, source_url, qdrant_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (guild_id, name, text, embedding, model, source_url, qdrant_id),
             )
             await self.conn.commit()
             return True
@@ -733,10 +827,11 @@ class Database:
         embedding: bytes | None,
         model: str | None,
         source_url: str | None = None,
+        qdrant_id: str | None = None,
     ) -> bool:
         cur = await self.conn.execute(
-            "UPDATE embeddings SET text = ?, embedding = ?, model = ?, source_url = ? WHERE guild_id = ? AND name = ?",
-            (text, embedding, model, source_url, guild_id, name),
+            "UPDATE embeddings SET text = ?, embedding = ?, model = ?, source_url = ?, qdrant_id = ? WHERE guild_id = ? AND name = ?",
+            (text, embedding, model, source_url, qdrant_id, guild_id, name),
         )
         await self.conn.commit()
         return cur.rowcount > 0
@@ -748,6 +843,13 @@ class Database:
         )
         await self.conn.commit()
         return cur.rowcount > 0
+
+    async def get_embedding_by_name(self, guild_id: int, name: str):
+        cur = await self.conn.execute(
+            "SELECT * FROM embeddings WHERE guild_id = ? AND name = ?",
+            (guild_id, name),
+        )
+        return await cur.fetchone()
 
     async def get_embedding(self, guild_id: int, name: str):
         cur = await self.conn.execute(
@@ -1528,3 +1630,130 @@ class Database:
             (repo, event_type, last_id, etag),
         )
         await self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # Learned facts (adaptive knowledge base)
+    # ------------------------------------------------------------------
+
+    async def add_learned_fact(
+        self,
+        guild_id: int,
+        fact: str,
+        embedding: bytes | None,
+        model: str | None,
+        source: str = "conversation",
+        confidence: float = 1.0,
+    ) -> bool:
+        """Insert a fact; silently ignore duplicates. Returns True if inserted."""
+        try:
+            await self.conn.execute(
+                "INSERT INTO learned_facts (guild_id, fact, embedding, model, source, confidence) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (guild_id, fact, embedding, model, source, confidence),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def get_learned_facts(self, guild_id: int, approved_only: bool = True):
+        if approved_only:
+            cur = await self.conn.execute(
+                "SELECT * FROM learned_facts WHERE guild_id = ? AND approved = 1 ORDER BY id DESC",
+                (guild_id,),
+            )
+        else:
+            cur = await self.conn.execute(
+                "SELECT * FROM learned_facts WHERE guild_id = ? ORDER BY id DESC",
+                (guild_id,),
+            )
+        return await cur.fetchall()
+
+    async def delete_learned_fact(self, guild_id: int, fact_id: int) -> bool:
+        cur = await self.conn.execute(
+            "DELETE FROM learned_facts WHERE id = ? AND guild_id = ?",
+            (fact_id, guild_id),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def set_fact_approval(self, guild_id: int, fact_id: int, approved: bool) -> bool:
+        cur = await self.conn.execute(
+            "UPDATE learned_facts SET approved = ? WHERE id = ? AND guild_id = ?",
+            (int(approved), fact_id, guild_id),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def reset_learned_facts(self, guild_id: int) -> int:
+        cur = await self.conn.execute(
+            "DELETE FROM learned_facts WHERE guild_id = ?", (guild_id,)
+        )
+        await self.conn.commit()
+        return cur.rowcount
+
+    async def count_learned_facts(self, guild_id: int) -> int:
+        cur = await self.conn.execute(
+            "SELECT COUNT(*) FROM learned_facts WHERE guild_id = ? AND approved = 1",
+            (guild_id,),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # Response feedback (thumbs up / down)
+    # ------------------------------------------------------------------
+
+    async def add_feedback(
+        self,
+        guild_id: int,
+        channel_id: int,
+        user_id: int,
+        message_id: int,
+        rating: int,
+        user_input: str | None = None,
+        bot_response: str | None = None,
+    ) -> bool:
+        """Record feedback. Returns False if already rated."""
+        try:
+            await self.conn.execute(
+                "INSERT INTO response_feedback "
+                "(guild_id, channel_id, user_id, message_id, rating, user_input, bot_response) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (guild_id, channel_id, user_id, message_id, rating, user_input, bot_response),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def get_feedback_stats(self, guild_id: int) -> dict:
+        cur = await self.conn.execute(
+            "SELECT "
+            "  COUNT(*) as total, "
+            "  COALESCE(SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END), 0) as positive, "
+            "  COALESCE(SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END), 0) as negative "
+            "FROM response_feedback WHERE guild_id = ?",
+            (guild_id,),
+        )
+        row = await cur.fetchone()
+        return {
+            "total": row["total"],
+            "positive": row["positive"],
+            "negative": row["negative"],
+        }
+
+    async def get_negative_feedback(self, guild_id: int, limit: int = 20):
+        cur = await self.conn.execute(
+            "SELECT * FROM response_feedback WHERE guild_id = ? AND rating = -1 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (guild_id, limit),
+        )
+        return await cur.fetchall()
+
+    async def reset_feedback(self, guild_id: int) -> int:
+        cur = await self.conn.execute(
+            "DELETE FROM response_feedback WHERE guild_id = ?", (guild_id,)
+        )
+        await self.conn.commit()
+        return cur.rowcount

@@ -17,6 +17,7 @@ from discord.ext import commands
 from bot.config import Config
 from bot.database import Database
 from bot.llm_service import LLMService
+from bot.qdrant_service import QdrantService
 
 # Cogs
 from bot.cogs.mod_logging import ModLoggingCog
@@ -54,6 +55,7 @@ async def main() -> None:
     await db.setup()
 
     llm = LLMService(config)
+    qdrant = QdrantService()
 
     # --- Discord bot ---
     intents = discord.Intents.default()
@@ -117,7 +119,7 @@ async def main() -> None:
     await bot.add_cog(EconomyCog(bot, db))
     await bot.add_cog(ReportsCog(bot, db))
     await bot.add_cog(UtilityCog(bot))
-    await bot.add_cog(SupportCog(bot, db, llm))
+    await bot.add_cog(SupportCog(bot, db, llm, qdrant))
     await bot.add_cog(LevelsCog(bot, db))
     await bot.add_cog(GiveawayCog(bot, db))
     await bot.add_cog(RemindersCog(bot, db))
