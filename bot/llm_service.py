@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import struct
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,110 @@ if TYPE_CHECKING:
     from bot.config import Config
 
 logger = logging.getLogger(__name__)
+
+_FACT_ALLOWED_CATEGORIES = {
+    "user_preference",
+    "user_identity",
+    "community_info",
+    "topic_fact",
+    "policy",
+}
+_FACT_CATEGORY_ALIASES = {
+    "preference": "user_preference",
+    "identity": "user_identity",
+    "server_info": "community_info",
+    "server_information": "community_info",
+    "community": "community_info",
+    "objective_fact": "topic_fact",
+    "fact": "topic_fact",
+    "rule": "policy",
+}
+_FACT_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "because",
+    "been",
+    "being",
+    "between",
+    "could",
+    "does",
+    "from",
+    "have",
+    "into",
+    "just",
+    "more",
+    "over",
+    "said",
+    "says",
+    "should",
+    "some",
+    "than",
+    "that",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "very",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+    "would",
+    "your",
+}
+_FACT_META_SUBJECT_RE = re.compile(
+    r"^(?:the\s+)?(?:assistant|bot|user|conversation|chat|message|reply|response|question|answer)\b",
+    re.IGNORECASE,
+)
+_FACT_META_VERB_RE = re.compile(
+    r"\b(?:asked|replied|responded|said|told|explained|mentioned|wrote|shared|formatted|summarized)\b",
+    re.IGNORECASE,
+)
+_FACT_UNRESOLVED_PRONOUN_RE = re.compile(
+    r"^(?:i|i'm|i am|i've|i'd|my|me|we|we're|we are|our|ours|you|your|yours)\b",
+    re.IGNORECASE,
+)
+_FACT_HEDGING_RE = re.compile(
+    r"\b(?:maybe|might|probably|possibly|perhaps|seems?|appears?|likely|i think|i believe|i guess)\b",
+    re.IGNORECASE,
+)
+_FACT_PREFIX_RE = re.compile(r"^(?:[-*•]|\d+[.)]|fact:|answer:|remember:)\s*", re.IGNORECASE)
+_FACT_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_fact_text(text: str) -> str:
+    text = _FACT_PREFIX_RE.sub("", text.strip())
+    text = _FACT_WHITESPACE_RE.sub(" ", text)
+    return text.strip(" \t\n\r\"'")
+
+
+def _significant_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[a-z0-9]{4,}", text.lower())
+        if token not in _FACT_STOPWORDS
+    ]
+
+
+def _has_grounding_overlap(fact: str, source_text: str) -> bool:
+    fact_tokens = set(_significant_tokens(fact))
+    if not fact_tokens:
+        return False
+    source_tokens = set(_significant_tokens(source_text))
+    if not source_tokens:
+        return False
+    overlap = fact_tokens & source_tokens
+    required = 1 if len(fact_tokens) == 1 else 2
+    return len(overlap) >= min(required, len(fact_tokens))
 
 # ---------------------------------------------------------------------------
 # Embedding helpers
@@ -131,6 +236,52 @@ class LLMService:
             base_url=config.llm_base_url,
             api_key=config.llm_api_key,
         )
+
+    @staticmethod
+    def _normalize_fact_category(category: Any) -> str:
+        raw = str(category or "").strip().lower().replace("-", "_").replace(" ", "_")
+        return _FACT_CATEGORY_ALIASES.get(raw, raw)
+
+    @classmethod
+    def fact_rejection_reason(
+        cls,
+        fact: str,
+        *,
+        source_text: str | None = None,
+        category: str | None = None,
+        confidence: float | None = None,
+        should_store: bool | None = None,
+    ) -> str | None:
+        normalized = _normalize_fact_text(fact)
+        if not normalized:
+            return "empty"
+        if should_store is False:
+            return "model_rejected"
+        if len(normalized) < 12:
+            return "too_short"
+        if len(normalized) > 240:
+            return "too_long"
+        if normalized.endswith("?"):
+            return "question"
+        if _FACT_META_SUBJECT_RE.match(normalized) and _FACT_META_VERB_RE.search(normalized):
+            return "conversation_meta"
+        if _FACT_UNRESOLVED_PRONOUN_RE.match(normalized):
+            return "unresolved_subject"
+        if _FACT_HEDGING_RE.search(normalized):
+            return "uncertain"
+        if category:
+            normalized_category = cls._normalize_fact_category(category)
+            if normalized_category not in _FACT_ALLOWED_CATEGORIES:
+                return "unsupported_category"
+        if confidence is not None and confidence < 0.72:
+            return "low_confidence"
+        if source_text and not _has_grounding_overlap(normalized, source_text):
+            return "not_grounded"
+        return None
+
+    @classmethod
+    def is_storable_fact(cls, fact: str, *, source_text: str | None = None) -> bool:
+        return cls.fact_rejection_reason(fact, source_text=source_text) is None
 
     # ------------------------------------------------------------------
     # Core chat completion (with function calling)
@@ -360,15 +511,18 @@ class LLMService:
         or when there is nothing worth learning).
         """
         instruction = (
-            "You are a knowledge extractor. Given a user question and an assistant reply, "
-            "extract up to {max} short, self-contained FACTUAL statements worth remembering. "
-            "Only extract facts about: the user's preferences or identity, server/community information, "
-            "or objective topic facts stated in the reply. "
-            "Do NOT extract anything about the assistant's tone, style, or how it responded. "
-            "Do NOT extract facts like 'the assistant told a story' or 'the assistant used a creative format'. "
-            "Each fact must be a single declarative sentence about the subject matter, not about the conversation itself. "
-            "Output ONLY a JSON array of strings, e.g. [\"Fact 1.\", \"Fact 2.\"]. "
-            "If there are no useful facts to extract, output an empty array []."
+            "You are a knowledge curator deciding what deserves long-term memory. "
+            "Given a user question and an assistant reply, extract up to {max} short, self-contained factual statements "
+            "that are durable and reusable later. "
+            "Only keep statements that are clearly supported by the text and belong to one of these categories: "
+            "user_preference, user_identity, community_info, topic_fact, policy. "
+            "Reject requests, one-off plans, speculation, uncertain claims, jokes, hypotheticals, conversational meta, "
+            "and anything about tone/style/format. "
+            "Rewrite first-person statements into explicit third-person facts when needed, for example 'I like dark mode' "
+            "becomes 'The user prefers dark mode.' "
+            "Output ONLY a JSON array. Each item must be an object with keys: fact, category, grounded_in, confidence, should_store, reason. "
+            "grounded_in must be one of user_message, assistant_reply, or both. confidence must be a number from 0 to 1. "
+            "If nothing should be remembered, output []."
         ).format(max=max_facts)
 
         exchange = f"User: {user_message}\nAssistant: {assistant_reply}"
@@ -383,9 +537,36 @@ class LLMService:
                 max_tokens=512,
             )
             raw = (response.choices[0].message.content or "").strip()
-            facts = json.loads(raw)
-            if isinstance(facts, list):
-                return [str(f).strip() for f in facts if isinstance(f, str) and f.strip()]
+            candidates = json.loads(raw)
+            if isinstance(candidates, list):
+                accepted: list[str] = []
+                seen: set[str] = set()
+                for candidate in candidates:
+                    if isinstance(candidate, str):
+                        fact = _normalize_fact_text(candidate)
+                        reason = self.fact_rejection_reason(fact, source_text=exchange)
+                    elif isinstance(candidate, dict):
+                        fact = _normalize_fact_text(str(candidate.get("fact", "")))
+                        reason = self.fact_rejection_reason(
+                            fact,
+                            source_text=exchange,
+                            category=str(candidate.get("category", "")),
+                            confidence=float(candidate.get("confidence", 0.0) or 0.0),
+                            should_store=candidate.get("should_store"),
+                        )
+                    else:
+                        continue
+
+                    if reason:
+                        logger.debug("Rejected learned fact candidate %r: %s", candidate, reason)
+                        continue
+                    if fact.lower() in seen:
+                        continue
+                    seen.add(fact.lower())
+                    accepted.append(fact)
+                    if len(accepted) >= max_facts:
+                        break
+                return accepted
         except Exception:
             logger.debug("Fact extraction failed (non-critical)", exc_info=True)
         return []

@@ -1,0 +1,9 @@
+{
+	"servers": {
+		"discord": {
+			"url": "https://glama.ai/endpoints/fmmlnurisx/mcp",
+			"type": "http"
+		}
+	},
+	"inputs": []
+}

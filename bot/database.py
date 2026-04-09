@@ -335,6 +335,18 @@ CREATE TABLE IF NOT EXISTS learned_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_facts_guild ON learned_facts (guild_id, approved);
 
+-- Explicit message training marks (brain emoji on Discord messages)
+CREATE TABLE IF NOT EXISTS learned_message_marks (
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    message_id      INTEGER NOT NULL,
+    author_id       INTEGER NOT NULL,
+    marked_by       INTEGER NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (guild_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learned_message_marks_guild ON learned_message_marks (guild_id, channel_id);
+
 -- Response feedback: per-message thumbs up/down ratings
 CREATE TABLE IF NOT EXISTS response_feedback (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -418,6 +430,22 @@ class Database:
             await self._db.commit()  # type: ignore[union-attr]
         except Exception:
             pass
+
+        # Create learned_message_marks table if missing
+        await self._db.execute(  # type: ignore[union-attr]
+            """CREATE TABLE IF NOT EXISTS learned_message_marks (
+                guild_id        INTEGER NOT NULL,
+                channel_id      INTEGER NOT NULL,
+                message_id      INTEGER NOT NULL,
+                author_id       INTEGER NOT NULL,
+                marked_by       INTEGER NOT NULL,
+                created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (guild_id, message_id)
+            )"""
+        )
+        await self._db.execute(  # type: ignore[union-attr]
+            "CREATE INDEX IF NOT EXISTS idx_learned_message_marks_guild ON learned_message_marks (guild_id, channel_id)"
+        )
 
         # Create response_feedback table if missing
         await self._db.execute(  # type: ignore[union-attr]
@@ -1710,6 +1738,32 @@ class Database:
         )
         row = await cur.fetchone()
         return row[0] if row else 0
+
+    async def has_learned_message_mark(self, guild_id: int, message_id: int) -> bool:
+        cur = await self.conn.execute(
+            "SELECT 1 FROM learned_message_marks WHERE guild_id = ? AND message_id = ?",
+            (guild_id, message_id),
+        )
+        return await cur.fetchone() is not None
+
+    async def add_learned_message_mark(
+        self,
+        guild_id: int,
+        channel_id: int,
+        message_id: int,
+        author_id: int,
+        marked_by: int,
+    ) -> bool:
+        try:
+            await self.conn.execute(
+                "INSERT INTO learned_message_marks (guild_id, channel_id, message_id, author_id, marked_by) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (guild_id, channel_id, message_id, author_id, marked_by),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
 
     # ------------------------------------------------------------------
     # Response feedback (thumbs up / down)

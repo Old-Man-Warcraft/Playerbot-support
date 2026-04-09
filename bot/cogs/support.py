@@ -32,6 +32,9 @@ from bot.crawler import WebCrawler
 logger = logging.getLogger(__name__)
 
 DISCORD_MAX_LEN = 2000
+BRAIN_EMOJI = "🧠"
+BRAIN_EMOJI_NAME = "brain"
+MAX_LEARNED_MESSAGE_LEN = 4000
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,6 +95,32 @@ def _embed_from_dict(data: dict) -> discord.Embed:
     for f in data.get("fields", []):
         em.add_field(name=f["name"], value=f["value"], inline=f.get("inline", False))
     return em
+
+
+def _is_brain_emoji(emoji: discord.PartialEmoji | discord.Emoji | str) -> bool:
+    emoji_str = str(emoji)
+    emoji_name = getattr(emoji, "name", emoji_str)
+    return emoji_str == BRAIN_EMOJI or str(emoji_name).lower() == BRAIN_EMOJI_NAME
+
+
+def _message_text_for_learning(message: discord.Message) -> str:
+    parts: list[str] = []
+
+    if message.content and message.content.strip():
+        parts.append(message.content.strip())
+
+    for embed in message.embeds[:3]:
+        if embed.title:
+            parts.append(str(embed.title).strip())
+        if embed.description:
+            parts.append(str(embed.description).strip())
+        for field in embed.fields[:10]:
+            field_text = "\n".join(part for part in (field.name, field.value) if part)
+            if field_text.strip():
+                parts.append(field_text.strip())
+
+    text = "\n\n".join(part for part in parts if part)
+    return text[:MAX_LEARNED_MESSAGE_LEN].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +223,106 @@ class SupportCog(commands.Cog, name="Support"):
 
     async def cog_unload(self) -> None:
         self.bot.tree.remove_command(self._ask_ctx.name, type=self._ask_ctx.type)
+
+    async def _learn_from_marked_message(
+        self,
+        message: discord.Message,
+        *,
+        marked_by: int,
+    ) -> str:
+        if not message.guild:
+            return "ignored"
+
+        guild_id = message.guild.id
+        if await self.db.has_learned_message_mark(guild_id, message.id):
+            return "already_marked"
+
+        learned_text = _message_text_for_learning(message)
+        if not learned_text:
+            return "empty"
+        if not self.llm.is_storable_fact(learned_text, source_text=learned_text):
+            logger.info(
+                "Rejected brain-marked message %s in guild %s because it is not durable factual knowledge",
+                message.id,
+                guild_id,
+            )
+            return "not_a_fact"
+
+        emb_model = await self._get_embedding_model(guild_id)
+        try:
+            vec, packed = await self.llm.create_embedding(learned_text, model=emb_model)
+        except Exception:
+            logger.exception("Failed to embed brain-marked message %s", message.id)
+            return "failed"
+
+        inserted = await self.db.add_learned_fact(
+            guild_id,
+            learned_text,
+            packed,
+            emb_model,
+            source="brain_reaction",
+        )
+        created_mark = await self.db.add_learned_message_mark(
+            guild_id,
+            message.channel.id,
+            message.id,
+            message.author.id,
+            marked_by,
+        )
+
+        if not created_mark:
+            return "already_marked"
+
+        if inserted:
+            await self.qdrant.upsert_fact(
+                guild_id,
+                str(message.id),
+                vec,
+                learned_text,
+                source="brain_reaction",
+            )
+            return "learned"
+        return "duplicate"
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        if not payload.guild_id or not _is_brain_emoji(payload.emoji):
+            return
+
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        member = payload.member or guild.get_member(payload.user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        if not member.guild_permissions.manage_guild:
+            return
+
+        channel = guild.get_channel(payload.channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return
+
+        try:
+            message = await channel.fetch_message(payload.message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        status = await self._learn_from_marked_message(message, marked_by=member.id)
+        if status == "learned":
+            logger.info(
+                "Learned from brain-marked message %s in guild %s by user %s",
+                payload.message_id,
+                payload.guild_id,
+                member.id,
+            )
 
     # ------------------------------------------------------------------
     # Internal: build system prompt for a guild/channel
@@ -1549,6 +1678,7 @@ class SupportCog(commands.Cog, name="Support"):
                 "**/train fact** `<fact>` — Teach the AI a single fact\n"
                 "**/train qa** `<question>` `<answer>` — Teach via Q&A pair\n"
                 "**/train text** `<text>` — Auto-extract facts from a text block\n"
+                "React to a message with 🧠 to store that message as server knowledge\n"
                 "**/train list** — Browse learned facts (paginated)\n"
                 "**/train delete** `<id>` · **/train approve** `<id>` `<bool>` · **/train reset**\n"
                 "Responses include 👍/👎 buttons — ratings are logged for review"
