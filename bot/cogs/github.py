@@ -461,11 +461,12 @@ class GitHubClient:
 # Notification embed builders
 # ---------------------------------------------------------------------------
 
-def _push_embed(repo: str, payload: dict) -> discord.Embed:
+def _push_embed(repo: str, payload: dict, actor: dict | None = None) -> discord.Embed:
     ref = payload.get("ref", "")
     branch = ref.split("/")[-1] if "/" in ref else ref
     commits = payload.get("commits") or []
-    pusher = payload.get("pusher", {}).get("name", "someone")
+    pusher_name = payload.get("pusher", {}).get("name") or (actor or {}).get("login", "someone")
+    avatar_url = (actor or {}).get("avatar_url")
     head = payload.get("head_commit") or {}
     repo_url = f"https://github.com/{repo}"
     em = discord.Embed(
@@ -474,7 +475,7 @@ def _push_embed(repo: str, payload: dict) -> discord.Embed:
         color=0x2DA44E,
         timestamp=datetime.now(timezone.utc),
     )
-    em.set_author(name=pusher, url=f"https://github.com/{pusher}")
+    em.set_author(name=pusher_name, url=f"https://github.com/{pusher_name}", icon_url=avatar_url)
     lines = []
     for c in commits[:5]:
         sha = c.get("id", "")[:7]
@@ -993,7 +994,7 @@ class GitHubCog(commands.Cog, name="GitHub"):
         embed: discord.Embed | None = None
 
         if event_type == "PushEvent":
-            embed = _push_embed(repo, payload)
+            embed = _push_embed(repo, payload, actor=event.get("actor"))
             event_key = "push"
         elif event_type == "PullRequestEvent":
             embed = _pr_embed(repo, payload)
