@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 
 if TYPE_CHECKING:
     from bot.config import Config
+    from bot.mcp_manager import MCPManager
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,8 @@ class LLMService:
         tools: list[dict] | None = None,
         allow_tools: bool = True,
         max_tool_rounds: int = 5,
+        mcp_manager: "MCPManager | None" = None,
+        guild_id: int = 0,
     ) -> dict[str, Any]:
         """Send a chat completion request and handle tool calls.
 
@@ -350,6 +353,8 @@ class LLMService:
         all_tools = list(BUILTIN_TOOLS) if tools_allowed_for_model else []
         if tools and tools_allowed_for_model:
             all_tools.extend(tools)
+        if mcp_manager and tools_allowed_for_model:
+            all_tools.extend(mcp_manager.get_tools_for_guild(guild_id))
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -424,7 +429,10 @@ class LLMService:
                 except json.JSONDecodeError:
                     fn_args = {}
 
-                result = _execute_builtin_tool(fn_name, fn_args)
+                if mcp_manager and mcp_manager.is_mcp_tool(fn_name):
+                    result = await mcp_manager.call_tool(guild_id, fn_name, fn_args)
+                else:
+                    result = _execute_builtin_tool(fn_name, fn_args)
 
                 # Collect embeds from create_embed calls
                 if fn_name == "create_embed":

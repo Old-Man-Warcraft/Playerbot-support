@@ -923,6 +923,7 @@ async def assistant_page(request: Request, guild_id: int | None = None):
     listen_channels: list[dict[str, int | str]] = []
     channel_prompts: list[dict[str, int | str]] = []
     prompt_templates: list[dict] = []
+    mcp_servers: list[dict] = []
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
     conversations = {"messages": 0, "users": 0, "channels": 0, "tokens": 0}
 
@@ -975,6 +976,10 @@ async def assistant_page(request: Request, guild_id: int | None = None):
             "SELECT id, name, content, created_by, created_at FROM prompt_templates WHERE guild_id = ? ORDER BY name",
             (guild_id,),
         )
+        mcp_servers = await db_fetchall(
+            "SELECT id, name, transport, command, url, enabled, created_at FROM mcp_servers WHERE guild_id = ? ORDER BY name",
+            (guild_id,),
+        )
 
     _cfg = Config()
     return templates.TemplateResponse(request, "assistant.html", ctx({
@@ -986,6 +991,7 @@ async def assistant_page(request: Request, guild_id: int | None = None):
         "listen_channels": listen_channels,
         "channel_prompts": channel_prompts,
         "prompt_templates": prompt_templates,
+        "mcp_servers": mcp_servers,
         "system_prompt": _cfg.system_prompt,
         "usage": usage,
         "conversations": conversations,
@@ -1180,6 +1186,70 @@ async def assistant_conversations_reset(request: Request, guild_id: int = Form(.
         return r
     await require_guild_access(request, guild_id)
     await db_execute("DELETE FROM conversation_history WHERE guild_id = ?", (guild_id,))
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# MCP server management
+# ---------------------------------------------------------------------------
+
+@app.post("/assistant/mcp/add")
+async def assistant_mcp_add(
+    request: Request,
+    guild_id: int = Form(...),
+    name: str = Form(...),
+    transport: str = Form(...),
+    command: str = Form(""),
+    url: str = Form(""),
+    env: str = Form("{}"),
+):
+    if r := auth_redirect(request):
+        return r
+    await require_guild_access(request, guild_id)
+    name = name.strip().lower().replace(" ", "_")
+    if transport not in ("stdio", "sse"):
+        raise HTTPException(status_code=400, detail="Invalid transport")
+    try:
+        json.loads(env or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid env JSON")
+    await db_execute(
+        "INSERT INTO mcp_servers (guild_id, name, transport, command, args, env, url) "
+        "VALUES (?, ?, ?, ?, '[]', ?, ?) "
+        "ON CONFLICT(guild_id, name) DO UPDATE SET transport=excluded.transport, "
+        "command=excluded.command, env=excluded.env, url=excluded.url",
+        (guild_id, name, transport, command.strip() or None, env.strip() or "{}", url.strip() or None),
+    )
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/mcp/toggle")
+async def assistant_mcp_toggle(
+    request: Request,
+    guild_id: int = Form(...),
+    server_id: int = Form(...),
+    enabled: int = Form(...),
+):
+    if r := auth_redirect(request):
+        return r
+    await require_guild_access(request, guild_id)
+    await db_execute(
+        "UPDATE mcp_servers SET enabled = ? WHERE id = ? AND guild_id = ?",
+        (enabled, server_id, guild_id),
+    )
+    return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
+
+
+@app.post("/assistant/mcp/delete")
+async def assistant_mcp_delete(
+    request: Request,
+    guild_id: int = Form(...),
+    server_id: int = Form(...),
+):
+    if r := auth_redirect(request):
+        return r
+    await require_guild_access(request, guild_id)
+    await db_execute("DELETE FROM mcp_servers WHERE id = ? AND guild_id = ?", (server_id, guild_id))
     return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
 
 

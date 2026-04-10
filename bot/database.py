@@ -396,6 +396,22 @@ CREATE TABLE IF NOT EXISTS response_feedback (
     UNIQUE(guild_id, message_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_guild ON response_feedback (guild_id);
+
+-- MCP server configurations per guild
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    name        TEXT    NOT NULL,       -- unique label for this server within the guild
+    transport   TEXT    NOT NULL DEFAULT 'stdio',  -- stdio | sse
+    command     TEXT,                   -- full command for stdio (e.g. 'npx -y @mcp/server-fs')
+    args        TEXT    NOT NULL DEFAULT '[]',  -- JSON array of extra args
+    env         TEXT    NOT NULL DEFAULT '{}',  -- JSON object of env vars
+    url         TEXT,                   -- SSE endpoint URL
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_servers_guild ON mcp_servers (guild_id);
 """
 
 
@@ -522,6 +538,27 @@ class Database:
         )
         await self._db.execute(  # type: ignore[union-attr]
             "CREATE INDEX IF NOT EXISTS idx_templates_guild ON prompt_templates (guild_id)"
+        )
+        await self._db.commit()  # type: ignore[union-attr]
+
+        # Create mcp_servers table if missing
+        await self._db.execute(  # type: ignore[union-attr]
+            """CREATE TABLE IF NOT EXISTS mcp_servers (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id    INTEGER NOT NULL,
+                name        TEXT    NOT NULL,
+                transport   TEXT    NOT NULL DEFAULT 'stdio',
+                command     TEXT,
+                args        TEXT    NOT NULL DEFAULT '[]',
+                env         TEXT    NOT NULL DEFAULT '{}',
+                url         TEXT,
+                enabled     INTEGER NOT NULL DEFAULT 1,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(guild_id, name)
+            )"""
+        )
+        await self._db.execute(  # type: ignore[union-attr]
+            "CREATE INDEX IF NOT EXISTS idx_mcp_servers_guild ON mcp_servers (guild_id)"
         )
         await self._db.commit()  # type: ignore[union-attr]
 
@@ -2028,6 +2065,111 @@ class Database:
         cur = await self.conn.execute(
             "DELETE FROM prompt_templates WHERE guild_id = ? AND name = ?",
             (guild_id, name),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # MCP server configurations
+    # ------------------------------------------------------------------
+
+    async def add_mcp_server(
+        self,
+        guild_id: int,
+        name: str,
+        transport: str,
+        command: str | None,
+        args: str,
+        env: str,
+        url: str | None,
+    ) -> bool:
+        """Insert a new MCP server config.  Returns False if name already exists."""
+        try:
+            await self.conn.execute(
+                "INSERT INTO mcp_servers (guild_id, name, transport, command, args, env, url) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (guild_id, name, transport, command, args, env, url),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def remove_mcp_server(self, guild_id: int, name: str) -> bool:
+        cur = await self.conn.execute(
+            "DELETE FROM mcp_servers WHERE guild_id = ? AND name = ?",
+            (guild_id, name),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def get_mcp_servers(self, guild_id: int, enabled_only: bool = False):
+        if enabled_only:
+            cur = await self.conn.execute(
+                "SELECT * FROM mcp_servers WHERE guild_id = ? AND enabled = 1 ORDER BY name",
+                (guild_id,),
+            )
+        else:
+            cur = await self.conn.execute(
+                "SELECT * FROM mcp_servers WHERE guild_id = ? ORDER BY name",
+                (guild_id,),
+            )
+        return await cur.fetchall()
+
+    async def get_mcp_server(self, guild_id: int, name: str):
+        cur = await self.conn.execute(
+            "SELECT * FROM mcp_servers WHERE guild_id = ? AND name = ?",
+            (guild_id, name),
+        )
+        return await cur.fetchone()
+
+    async def toggle_mcp_server(self, guild_id: int, name: str) -> bool | None:
+        row = await self.get_mcp_server(guild_id, name)
+        if row is None:
+            return None
+        new_val = 0 if row["enabled"] else 1
+        await self.conn.execute(
+            "UPDATE mcp_servers SET enabled = ? WHERE guild_id = ? AND name = ?",
+            (new_val, guild_id, name),
+        )
+        await self.conn.commit()
+        return bool(new_val)
+
+    async def update_mcp_server(
+        self,
+        guild_id: int,
+        name: str,
+        *,
+        transport: str | None = None,
+        command: str | None = None,
+        args: str | None = None,
+        env: str | None = None,
+        url: str | None = None,
+    ) -> bool:
+        """Update one or more fields of an existing MCP server config."""
+        fields: list[str] = []
+        values: list[object] = []
+        if transport is not None:
+            fields.append("transport = ?")
+            values.append(transport)
+        if command is not None:
+            fields.append("command = ?")
+            values.append(command)
+        if args is not None:
+            fields.append("args = ?")
+            values.append(args)
+        if env is not None:
+            fields.append("env = ?")
+            values.append(env)
+        if url is not None:
+            fields.append("url = ?")
+            values.append(url)
+        if not fields:
+            return False
+        values.extend([guild_id, name])
+        cur = await self.conn.execute(
+            f"UPDATE mcp_servers SET {', '.join(fields)} WHERE guild_id = ? AND name = ?",
+            values,
         )
         await self.conn.commit()
         return cur.rowcount > 0

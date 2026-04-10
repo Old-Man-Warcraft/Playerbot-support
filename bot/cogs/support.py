@@ -23,6 +23,7 @@ from discord.ext import commands
 if TYPE_CHECKING:
     from bot.database import Database
     from bot.llm_service import LLMService
+    from bot.mcp_manager import MCPManager
 
 from bot.qdrant_service import QdrantService
 
@@ -211,12 +212,18 @@ class SupportCog(commands.Cog, name="Support"):
     """AI-powered assistant with conversation memory, RAG, function calling, and more."""
 
     def __init__(
-        self, bot: commands.Bot, db: "Database", llm: "LLMService", qdrant: QdrantService | None = None
+        self,
+        bot: commands.Bot,
+        db: "Database",
+        llm: "LLMService",
+        qdrant: QdrantService | None = None,
+        mcp_manager: "MCPManager | None" = None,
     ) -> None:
         self.bot = bot
         self.db = db
         self.llm = llm
         self.qdrant: QdrantService = qdrant or QdrantService()
+        self.mcp_manager = mcp_manager
         self._config = Config()
         self.model_discovery = ModelDiscoveryService(self._config)
         self._processing_messages: set[int] = set()
@@ -580,6 +587,8 @@ class SupportCog(commands.Cog, name="Support"):
             max_tokens=max_tokens,
             tools=tools,
             allow_tools=function_calling_enabled,
+            mcp_manager=self.mcp_manager,
+            guild_id=guild_id,
         )
 
         # Store assistant reply

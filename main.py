@@ -17,9 +17,11 @@ from discord.ext import commands
 from bot.config import Config
 from bot.database import Database
 from bot.llm_service import LLMService
+from bot.mcp_manager import MCPManager, MCPServerConfig
 from bot.qdrant_service import QdrantService
 
 # Cogs
+from bot.cogs.mcp import MCPCog
 from bot.cogs.mod_logging import ModLoggingCog
 from bot.cogs.moderation import ModerationCog
 from bot.cogs.tickets import TicketsCog
@@ -57,6 +59,7 @@ async def main() -> None:
 
     llm = LLMService(config)
     qdrant = QdrantService()
+    mcp_manager = MCPManager()
 
     # --- Discord bot ---
     intents = discord.Intents.default()
@@ -87,6 +90,10 @@ async def main() -> None:
         logger.info("Bot is ready — %d cog(s) loaded", len(bot.cogs))
         for guild in bot.guilds:
             await _seed_guild(guild)
+            rows = await db.get_mcp_servers(guild.id, enabled_only=True)
+            for row in rows:
+                config_row = MCPServerConfig.from_db_row(row)
+                await mcp_manager.connect_server(config_row)
         logger.info("Seeded %d guild(s) into guild_config", len(bot.guilds))
         if bot.user:
             permissions = discord.Permissions(
@@ -125,7 +132,8 @@ async def main() -> None:
     await bot.add_cog(EconomyCog(bot, db))
     await bot.add_cog(ReportsCog(bot, db))
     await bot.add_cog(UtilityCog(bot))
-    await bot.add_cog(SupportCog(bot, db, llm, qdrant))
+    await bot.add_cog(SupportCog(bot, db, llm, qdrant, mcp_manager))
+    await bot.add_cog(MCPCog(bot, db, mcp_manager))
     await bot.add_cog(LevelsCog(bot, db))
     await bot.add_cog(GiveawayCog(bot, db))
     await bot.add_cog(RemindersCog(bot, db))
@@ -167,6 +175,7 @@ async def main() -> None:
     try:
         await bot.start(config.discord_token)
     finally:
+        await mcp_manager.shutdown()
         await db.close()
         await bot.close()
 
