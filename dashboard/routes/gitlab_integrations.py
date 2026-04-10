@@ -131,8 +131,11 @@ class GitLabIntegrationsModule:
 
     async def _gitlab_get(self, path: str) -> tuple[int, Any]:
         url = f"{self.gitlab_url}/api/v4{path}"
-        async with httpx.AsyncClient(timeout=15.0, headers=self._gitlab_headers()) as client:
-            response = await client.get(url)
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=self._gitlab_headers()) as client:
+                response = await client.get(url)
+        except Exception:
+            return 0, None
         try:
             payload = response.json()
         except Exception:
