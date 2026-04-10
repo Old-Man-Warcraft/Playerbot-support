@@ -39,6 +39,7 @@ from bot.cogs.reminders import RemindersCog
 from bot.cogs.starboard import StarboardCog
 from bot.cogs.highlights import HighlightsCog
 from bot.cogs.github import GitHubCog
+from bot.cogs.gitlab import GitLabCog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,6 +132,7 @@ async def main() -> None:
     await bot.add_cog(StarboardCog(bot, db))
     await bot.add_cog(HighlightsCog(bot, db))
     await bot.add_cog(GitHubCog(bot, db, config))
+    await bot.add_cog(GitLabCog(bot, db, config))
 
     # --- Bot-level interaction check for custom permission overrides ---
     @bot.tree.interaction_check

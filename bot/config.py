@@ -34,6 +34,14 @@ class Config:
         default_factory=lambda: os.getenv("GITHUB_TOKEN")
     )
 
+    # ── GitLab integration ───────────────────────────────────────────
+    gitlab_token: str | None = field(
+        default_factory=lambda: os.getenv("GITLAB_TOKEN")
+    )
+    gitlab_url: str = field(
+        default_factory=lambda: os.getenv("GITLAB_URL", "https://gitlab.com")
+    )
+
 
 # ── Hard-coded defaults for guild-level settings ────────────────────
 # Used as fallback when a guild has no DB override.  Admins can change

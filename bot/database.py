@@ -320,6 +320,28 @@ CREATE TABLE IF NOT EXISTS github_poll_state (
     PRIMARY KEY (repo, event_type)
 );
 
+-- GitLab project subscriptions (per guild)
+CREATE TABLE IF NOT EXISTS gitlab_subscriptions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    project         TEXT    NOT NULL,       -- "namespace/project" or numeric project ID as text
+    events          TEXT    NOT NULL DEFAULT 'push,merge_request,issues,release',
+    added_by        INTEGER NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, channel_id, project)
+);
+CREATE INDEX IF NOT EXISTS idx_gl_subs_guild ON gitlab_subscriptions (guild_id);
+
+-- GitLab poll state — tracks last-seen event ID per project
+CREATE TABLE IF NOT EXISTS gitlab_poll_state (
+    project     TEXT    NOT NULL,
+    event_type  TEXT    NOT NULL,
+    last_id     TEXT,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project, event_type)
+);
+
 -- Adaptive learning: facts extracted from conversations and manual training
 CREATE TABLE IF NOT EXISTS learned_facts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1675,6 +1697,96 @@ class Database:
             "ON CONFLICT(repo, event_type) DO UPDATE SET "
             "last_id = excluded.last_id, etag = excluded.etag, updated_at = excluded.updated_at",
             (repo, event_type, last_id, etag),
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # GitLab subscriptions
+    # ------------------------------------------------------------------
+
+    async def add_gitlab_subscription(
+        self,
+        guild_id: int,
+        channel_id: int,
+        project: str,
+        events: str,
+        added_by: int,
+    ) -> bool:
+        try:
+            await self.conn.execute(
+                "INSERT INTO gitlab_subscriptions (guild_id, channel_id, project, events, added_by) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (guild_id, channel_id, project, events, added_by),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def update_gitlab_subscription_events(
+        self, guild_id: int, channel_id: int, project: str, events: str
+    ) -> bool:
+        cur = await self.conn.execute(
+            "UPDATE gitlab_subscriptions SET events = ? "
+            "WHERE guild_id = ? AND channel_id = ? AND project = ?",
+            (events, guild_id, channel_id, project),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def remove_gitlab_subscription(
+        self, guild_id: int, channel_id: int, project: str
+    ) -> bool:
+        cur = await self.conn.execute(
+            "DELETE FROM gitlab_subscriptions WHERE guild_id = ? AND channel_id = ? AND project = ?",
+            (guild_id, channel_id, project),
+        )
+        if cur.rowcount > 0:
+            remaining_cur = await self.conn.execute(
+                "SELECT COUNT(*) AS c FROM gitlab_subscriptions WHERE project = ?",
+                (project,),
+            )
+            remaining = await remaining_cur.fetchone()
+            if not remaining or remaining["c"] == 0:
+                await self.conn.execute(
+                    "DELETE FROM gitlab_poll_state WHERE project = ?",
+                    (project,),
+                )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def get_gitlab_subscriptions(self, guild_id: int):
+        cur = await self.conn.execute(
+            "SELECT * FROM gitlab_subscriptions WHERE guild_id = ? ORDER BY project",
+            (guild_id,),
+        )
+        return await cur.fetchall()
+
+    async def get_all_gitlab_subscriptions(self):
+        """Return every subscription across all guilds (used by poller)."""
+        cur = await self.conn.execute("SELECT * FROM gitlab_subscriptions")
+        return await cur.fetchall()
+
+    # ------------------------------------------------------------------
+    # GitLab poll state
+    # ------------------------------------------------------------------
+
+    async def get_gitlab_poll_state(self, project: str, event_type: str):
+        cur = await self.conn.execute(
+            "SELECT * FROM gitlab_poll_state WHERE project = ? AND event_type = ?",
+            (project, event_type),
+        )
+        return await cur.fetchone()
+
+    async def set_gitlab_poll_state(
+        self, project: str, event_type: str, last_id: str | None
+    ) -> None:
+        await self.conn.execute(
+            "INSERT INTO gitlab_poll_state (project, event_type, last_id, updated_at) "
+            "VALUES (?, ?, ?, datetime('now')) "
+            "ON CONFLICT(project, event_type) DO UPDATE SET "
+            "last_id = excluded.last_id, updated_at = excluded.updated_at",
+            (project, event_type, last_id),
         )
         await self.conn.commit()
 
