@@ -245,14 +245,6 @@ async function refreshModels() {
   }
 }
 
-// Intercept delete forms → custom confirm dialog
-document.querySelectorAll('form[data-confirm-msg]').forEach(form => {
-  form.addEventListener('submit', e => {
-    e.preventDefault();
-    showConfirmDialog(form.dataset.confirmMsg, () => form.submit());
-  });
-});
-
 // Show saved toast on page load if came from a save action
 const params = new URLSearchParams(location.search);
 if (params.get('saved') === '1') {

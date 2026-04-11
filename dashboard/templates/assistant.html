@@ -123,7 +123,7 @@
           {% for trigger in triggers %}
           <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
             <code class="text-sm text-gray-300 break-all">{{ trigger.pattern }}</code>
-            <form method="post" action="/assistant/triggers/delete" onsubmit="return confirm('Delete this trigger?')">
+            <form method="post" action="/assistant/triggers/delete" data-confirm-msg="Delete this trigger?">
               <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
               <input type="hidden" name="pattern" value="{{ trigger.pattern }}"/>
               <button class="btn-danger" type="submit"><i class="fa fa-trash"></i></button>
@@ -159,13 +159,13 @@
           </div>
         </div>
         <div class="flex gap-3 flex-wrap">
-          <form method="post" action="/assistant/usage/reset" onsubmit="return confirm('Reset token usage stats for this guild?')">
+          <form method="post" action="/assistant/usage/reset" data-confirm-msg="Reset token usage stats for this guild?">
             <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
-            <button class="btn-danger"><i class="fa fa-eraser"></i> Reset usage</button>
+            <button class="btn-danger" type="submit"><i class="fa fa-eraser"></i> Reset usage</button>
           </form>
-          <form method="post" action="/assistant/conversations/reset" onsubmit="return confirm('Delete all conversation history for this guild?')">
+          <form method="post" action="/assistant/conversations/reset" data-confirm-msg="Delete all conversation history for this guild?">
             <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
-            <button class="btn-danger"><i class="fa fa-comments-slash"></i> Reset conversations</button>
+            <button class="btn-danger" type="submit"><i class="fa fa-comments-slash"></i> Reset conversations</button>
           </form>
         </div>
       </div>
@@ -239,10 +239,10 @@
                 <button class="btn-secondary text-xs py-1 px-3"><i class="fa fa-xmark"></i> Deactivate</button>
               </form>
               {% endif %}
-              <form method="post" action="/assistant/templates/delete" onsubmit="return confirm('Delete template {{ tpl.name }}?')">
+              <form method="post" action="/assistant/templates/delete" data-confirm-msg="{{ ('Delete template ' ~ tpl.name ~ '?')|e }}">
                 <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
                 <input type="hidden" name="template_id" value="{{ tpl.id }}"/>
-                <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                <button class="btn-danger" type="submit"><i class="fa fa-trash"></i></button>
               </form>
             </div>
           </div>
@@ -313,10 +313,10 @@
                 <p class="text-sm text-gray-200 font-mono mb-1">{{ row.channel_id }}</p>
                 <p class="text-xs text-gray-400 break-words">{{ row.value }}</p>
               </div>
-              <form method="post" action="/assistant/channel-prompts/delete" onsubmit="return confirm('Delete this channel prompt?')">
+              <form method="post" action="/assistant/channel-prompts/delete" data-confirm-msg="Delete this channel prompt?">
                 <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
                 <input type="hidden" name="channel_id" value="{{ row.channel_id }}"/>
-                <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                <button class="btn-danger" type="submit"><i class="fa fa-trash"></i></button>
               </form>
             </div>
           </div>
@@ -386,10 +386,10 @@
                     <input type="hidden" name="enabled" value="{{ 0 if fn.enabled else 1 }}"/>
                     <button class="btn-secondary text-xs py-1 px-3">{{ 'Disable' if fn.enabled else 'Enable' }}</button>
                   </form>
-                  <form method="post" action="/assistant/functions/delete" onsubmit="return confirm('Delete this custom function?')">
+                  <form method="post" action="/assistant/functions/delete" data-confirm-msg="Delete this custom function?">
                     <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
                     <input type="hidden" name="function_id" value="{{ fn.id }}"/>
-                    <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                    <button class="btn-danger" type="submit"><i class="fa fa-trash"></i></button>
                   </form>
                 </div>
               </td>
@@ -475,10 +475,10 @@
                     <input type="hidden" name="enabled" value="{{ 0 if srv.enabled else 1 }}"/>
                     <button class="btn-secondary text-xs py-1 px-3">{{ 'Disable' if srv.enabled else 'Enable' }}</button>
                   </form>
-                  <form method="post" action="/assistant/mcp/delete" onsubmit="return confirm('Remove MCP server {{ srv.name }}?')">
+                  <form method="post" action="/assistant/mcp/delete" data-confirm-msg="{{ ('Remove MCP server ' ~ srv.name ~ '?')|e }}">
                     <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
                     <input type="hidden" name="server_id" value="{{ srv.id }}"/>
-                    <button class="btn-danger"><i class="fa fa-trash"></i></button>
+                    <button class="btn-danger" type="submit"><i class="fa fa-trash"></i></button>
                   </form>
                 </div>
               </td>

@@ -142,21 +142,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Intercept forms with data-confirm and replace window.confirm
+  // Confirm before POST: data-confirm-msg (preferred) or legacy onsubmit="return confirm('…')"
+  function wireFormConfirm(form, msg) {
+    const onSubmit = e => {
+      e.preventDefault();
+      showConfirmDialog(msg, () => {
+        form.removeEventListener('submit', onSubmit);
+        if (typeof form.requestSubmit === 'function') {
+          try {
+            form.requestSubmit();
+          } catch {
+            form.submit();
+          }
+        } else {
+          form.submit();
+        }
+      });
+    };
+    form.addEventListener('submit', onSubmit);
+  }
+
+  document.querySelectorAll('form[data-confirm-msg]').forEach(form => {
+    const msg = form.getAttribute('data-confirm-msg');
+    if (msg) wireFormConfirm(form, msg);
+  });
+
   document.querySelectorAll('form[onsubmit]').forEach(form => {
     const attr = form.getAttribute('onsubmit') || '';
     const match = attr.match(/confirm\(['"](.+)['"]\)/);
     if (!match) return;
     const msg = match[1];
     form.removeAttribute('onsubmit');
-    const onConfirmSubmit = e => {
-      e.preventDefault();
-      showConfirmDialog(msg, () => {
-        form.removeEventListener('submit', onConfirmSubmit);
-        form.submit();
-      });
-    };
-    form.addEventListener('submit', onConfirmSubmit);
+    wireFormConfirm(form, msg);
   });
 });
 
@@ -185,9 +202,20 @@ function showConfirmDialog(message, onConfirm, onCancel) {
   document.body.appendChild(overlay);
 
   const close = () => overlay.remove();
-  overlay.querySelector('#db-confirm-cancel').addEventListener('click', () => { close(); if (onCancel) onCancel(); });
-  overlay.querySelector('#db-confirm-ok').addEventListener('click', () => { close(); if (onConfirm) onConfirm(); });
-  overlay.addEventListener('click', e => { if (e.target === overlay) { close(); if (onCancel) onCancel(); } });
+  overlay.querySelector('#db-confirm-cancel').addEventListener('click', () => {
+    if (onCancel) onCancel();
+    close();
+  });
+  overlay.querySelector('#db-confirm-ok').addEventListener('click', () => {
+    if (onConfirm) onConfirm();
+    close();
+  });
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) {
+      if (onCancel) onCancel();
+      close();
+    }
+  });
   overlay.querySelector('#db-confirm-ok').focus();
 }
 

@@ -132,7 +132,7 @@ def init(templates: Jinja2Templates, bot_config) -> APIRouter:
         pattern = pattern.strip()
         if pattern:
             await db_execute(
-                "DELETE FROM assistant_triggers WHERE guild_id = ? AND pattern = ?",
+                "DELETE FROM assistant_triggers WHERE guild_id = ? AND TRIM(pattern) = TRIM(?)",
                 (guild_id, pattern),
             )
         return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
