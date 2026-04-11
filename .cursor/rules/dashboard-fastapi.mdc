@@ -1,0 +1,13 @@
+---
+description: FastAPI dashboard routes, auth, and templates for Playerbot-support
+globs: dashboard/**/*.py
+alwaysApply: false
+---
+
+# Dashboard (FastAPI)
+
+- **Composition:** `dashboard/app.py` mounts static files, templates, and **`dashboard/routes/*.py`** routers. New pages: add a route module (or extend one), expose `init(templates, …)` returning an `APIRouter`, then `include_router` in `app.py`.
+- **Context helpers:** Use `dashboard/helpers.py` (`require_guild_access`, `db_fetchone`, `ctx`, etc.) instead of duplicating DB or session logic.
+- **Auth:** Discord OAuth and guild access rules are security-sensitive; changing `auth.py` or session settings requires checking callback URLs, `BOT_OWNER_DISCORD_ID`, and `Manage Server` assumptions documented in `README.md`.
+- **Config:** Dynamic guild config may go through `DynamicConfigSchema` / `config_definitions.py` — align new fields with both dashboard forms and bot-side readers.
+- **Templates & static:** Live under `dashboard/templates/` and `dashboard/static/`; keep JS/CSS consistent with existing dashboard patterns.

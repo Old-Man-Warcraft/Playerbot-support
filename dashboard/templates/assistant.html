@@ -125,8 +125,8 @@
             <code class="text-sm text-gray-300 break-all">{{ trigger.pattern }}</code>
             <form method="post" action="/assistant/triggers/delete" onsubmit="return confirm('Delete this trigger?')">
               <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
-              <input type="hidden" name="trigger_id" value="{{ trigger.id }}"/>
-              <button class="btn-danger"><i class="fa fa-trash"></i></button>
+              <input type="hidden" name="pattern" value="{{ trigger.pattern }}"/>
+              <button class="btn-danger" type="submit"><i class="fa fa-trash"></i></button>
             </form>
           </div>
           {% else %}

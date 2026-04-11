@@ -129,4 +129,28 @@ class BaseDatabase:
         except Exception:
             pass
 
+        cur = await self._db.execute(  # type: ignore[union-attr]
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='assistant_triggers'"
+        )
+        if await cur.fetchone():
+            cur = await self._db.execute("PRAGMA table_info(assistant_triggers)")  # type: ignore[union-attr]
+            trig_cols = {row[1] for row in await cur.fetchall()}
+            if trig_cols and "id" not in trig_cols:
+                await self._db.executescript(  # type: ignore[union-attr]
+                    """
+                    CREATE TABLE assistant_triggers_new (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        guild_id    INTEGER NOT NULL,
+                        pattern     TEXT    NOT NULL,
+                        UNIQUE(guild_id, pattern)
+                    );
+                    INSERT INTO assistant_triggers_new (guild_id, pattern)
+                        SELECT guild_id, pattern FROM assistant_triggers;
+                    DROP TABLE assistant_triggers;
+                    ALTER TABLE assistant_triggers_new RENAME TO assistant_triggers;
+                    CREATE INDEX IF NOT EXISTS idx_triggers_guild ON assistant_triggers (guild_id);
+                    """
+                )
+                logger.info("Migration: rebuilt assistant_triggers with id column")
+
         await self._db.commit()  # type: ignore[union-attr]

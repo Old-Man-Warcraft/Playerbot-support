@@ -125,11 +125,16 @@ def init(templates: Jinja2Templates, bot_config) -> APIRouter:
         return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
 
     @router.post("/assistant/triggers/delete")
-    async def assistant_trigger_delete(request: Request, guild_id: int = Form(...), trigger_id: int = Form(...)):
+    async def assistant_trigger_delete(request: Request, guild_id: int = Form(...), pattern: str = Form(...)):
         if r := auth_redirect(request):
             return r
         await require_guild_access(request, guild_id)
-        await db_execute("DELETE FROM assistant_triggers WHERE id = ? AND guild_id = ?", (trigger_id, guild_id))
+        pattern = pattern.strip()
+        if pattern:
+            await db_execute(
+                "DELETE FROM assistant_triggers WHERE guild_id = ? AND pattern = ?",
+                (guild_id, pattern),
+            )
         return RedirectResponse(f"/assistant?guild_id={guild_id}", status_code=302)
 
     @router.post("/assistant/functions/save")
