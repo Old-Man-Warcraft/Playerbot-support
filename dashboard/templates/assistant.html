@@ -37,6 +37,9 @@
         <a href="/knowledge?guild_id={{ guild_id }}&tab=embeddings" class="sidebar-link !px-0 !py-1 hover:!bg-transparent text-[#5865F2] hover:underline">
           <i class="fa fa-database w-4 text-center"></i> Knowledge base
         </a>
+        <a href="/assistant?guild_id={{ guild_id }}#react-train" class="sidebar-link !px-0 !py-1 hover:!bg-transparent text-[#5865F2] hover:underline">
+          <i class="fa fa-brain w-4 text-center"></i> React-train trusted users
+        </a>
       </div>
     </div>
     {% endif %}
@@ -102,6 +105,49 @@
           <p class="text-gray-500 text-xs mb-1">Learning</p>
           <p class="text-gray-200">{{ 'Enabled' if config_values.get('assistant_learning_enabled', '1') != '0' else 'Disabled' }}</p>
         </div>
+      </div>
+    </div>
+
+    <div class="card p-5" id="react-train">
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 class="font-semibold text-white">React-train trusted users</h2>
+          <p class="text-sm text-gray-500">
+            Members listed here may add server knowledge by reacting with 🧠 or 👍 on a message, even without
+            <strong class="text-gray-400">Manage Messages</strong>. Anyone with <strong class="text-gray-400">Manage Server</strong>
+            or <strong class="text-gray-400">Manage Messages</strong> can always react-train. Same list as
+            <code class="text-gray-400">/train trusted</code> (max 50 user IDs).
+          </p>
+        </div>
+        <span class="text-xs text-gray-500">{{ train_trusted_user_ids|length }} trusted</span>
+      </div>
+      <form method="post" action="/assistant/train-trusted/add" class="flex flex-wrap gap-3 mb-4 items-end">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div class="flex-1 min-w-[12rem]">
+          <label class="text-xs text-gray-500 mb-1 block">Discord user ID</label>
+          <input class="input font-mono" type="text" name="user_id" inputmode="numeric" pattern="[0-9]+" placeholder="123456789012345678" required/>
+        </div>
+        <button class="btn-primary" type="submit"><i class="fa fa-user-plus"></i> Add trusted</button>
+      </form>
+      <div class="flex gap-3 mb-4 flex-wrap">
+        <form method="post" action="/assistant/train-trusted/clear" data-confirm-msg="Remove all react-train trusted users for this guild?">
+          <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+          <button class="btn-danger" type="submit"><i class="fa fa-users-slash"></i> Clear all</button>
+        </form>
+      </div>
+      <div class="space-y-2 max-h-[18rem] overflow-y-auto">
+        {% for uid in train_trusted_user_ids %}
+        <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+          <p class="text-sm text-gray-200 font-mono">{{ uid }}</p>
+          <form method="post" action="/assistant/train-trusted/remove" data-confirm-msg="Remove this user from react-train trusted list?">
+            <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+            <input type="hidden" name="user_id" value="{{ uid }}"/>
+            <button class="btn-danger" type="submit"><i class="fa fa-user-minus"></i></button>
+          </form>
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-500 text-center py-6">No extra trusted users — moderators with Manage Messages (or Manage Server) can still react-train.</p>
+        {% endfor %}
       </div>
     </div>
 

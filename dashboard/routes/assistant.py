@@ -22,6 +22,29 @@ from dashboard.helpers import (
 
 router = APIRouter()
 
+# Same key as bot/cogs/support.py — comma-separated Discord user snowflakes.
+_TRAIN_TRUSTED_USER_IDS_KEY = "assistant_train_trusted_user_ids"
+_MAX_TRAIN_TRUSTED_USERS = 50
+
+
+def _parse_train_trusted_user_ids(raw: str | None) -> set[int]:
+    if not raw:
+        return set()
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out
+
+
+def _serialize_train_trusted_user_ids(ids: set[int]) -> str:
+    return ",".join(str(i) for i in sorted(ids))
+
 
 def init(templates: Jinja2Templates, bot_config) -> APIRouter:
     @router.get("/assistant", response_class=HTMLResponse)
@@ -39,6 +62,7 @@ def init(templates: Jinja2Templates, bot_config) -> APIRouter:
         mcp_servers: list = []
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
         conversations = {"messages": 0, "users": 0, "channels": 0, "tokens": 0}
+        train_trusted_user_ids: list[int] = []
 
         if guild_id:
             config_values = await get_guild_config_map(guild_id)
@@ -93,6 +117,9 @@ def init(templates: Jinja2Templates, bot_config) -> APIRouter:
                 "SELECT id, name, transport, command, url, enabled, created_at FROM mcp_servers WHERE guild_id = ? ORDER BY name",
                 (guild_id,),
             )
+            train_trusted_user_ids = sorted(
+                _parse_train_trusted_user_ids(config_values.get(_TRAIN_TRUSTED_USER_IDS_KEY))
+            )
 
         return templates.TemplateResponse(request, "assistant.html", ctx({
             "guilds": guilds,
@@ -107,8 +134,69 @@ def init(templates: Jinja2Templates, bot_config) -> APIRouter:
             "system_prompt": bot_config.system_prompt,
             "usage": usage,
             "conversations": conversations,
+            "train_trusted_user_ids": train_trusted_user_ids,
             "active_page": "assistant",
         }))
+
+    @router.post("/assistant/train-trusted/add")
+    async def assistant_train_trusted_add(request: Request, guild_id: int = Form(...), user_id: str = Form(...)):
+        if r := auth_redirect(request):
+            return r
+        await require_guild_access(request, guild_id)
+        try:
+            uid = int(str(user_id).strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid user ID") from None
+        if uid <= 0:
+            raise HTTPException(status_code=400, detail="Invalid user ID")
+        cfg = await get_guild_config_map(guild_id)
+        ids = _parse_train_trusted_user_ids(cfg.get(_TRAIN_TRUSTED_USER_IDS_KEY))
+        if uid in ids:
+            return RedirectResponse(f"/assistant?guild_id={guild_id}#react-train", status_code=302)
+        if len(ids) >= _MAX_TRAIN_TRUSTED_USERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At most {_MAX_TRAIN_TRUSTED_USERS} trusted users are allowed.",
+            )
+        ids.add(uid)
+        await db_execute(
+            "INSERT INTO guild_config (guild_id, key, value) VALUES (?, ?, ?) "
+            "ON CONFLICT(guild_id, key) DO UPDATE SET value = excluded.value",
+            (guild_id, _TRAIN_TRUSTED_USER_IDS_KEY, _serialize_train_trusted_user_ids(ids)),
+        )
+        return RedirectResponse(f"/assistant?guild_id={guild_id}#react-train", status_code=302)
+
+    @router.post("/assistant/train-trusted/remove")
+    async def assistant_train_trusted_remove(request: Request, guild_id: int = Form(...), user_id: int = Form(...)):
+        if r := auth_redirect(request):
+            return r
+        await require_guild_access(request, guild_id)
+        cfg = await get_guild_config_map(guild_id)
+        ids = _parse_train_trusted_user_ids(cfg.get(_TRAIN_TRUSTED_USER_IDS_KEY))
+        ids.discard(user_id)
+        if not ids:
+            await db_execute(
+                "DELETE FROM guild_config WHERE guild_id = ? AND key = ?",
+                (guild_id, _TRAIN_TRUSTED_USER_IDS_KEY),
+            )
+        else:
+            await db_execute(
+                "INSERT INTO guild_config (guild_id, key, value) VALUES (?, ?, ?) "
+                "ON CONFLICT(guild_id, key) DO UPDATE SET value = excluded.value",
+                (guild_id, _TRAIN_TRUSTED_USER_IDS_KEY, _serialize_train_trusted_user_ids(ids)),
+            )
+        return RedirectResponse(f"/assistant?guild_id={guild_id}#react-train", status_code=302)
+
+    @router.post("/assistant/train-trusted/clear")
+    async def assistant_train_trusted_clear(request: Request, guild_id: int = Form(...)):
+        if r := auth_redirect(request):
+            return r
+        await require_guild_access(request, guild_id)
+        await db_execute(
+            "DELETE FROM guild_config WHERE guild_id = ? AND key = ?",
+            (guild_id, _TRAIN_TRUSTED_USER_IDS_KEY),
+        )
+        return RedirectResponse(f"/assistant?guild_id={guild_id}#react-train", status_code=302)
 
     @router.post("/assistant/triggers/add")
     async def assistant_trigger_add(request: Request, guild_id: int = Form(...), pattern: str = Form(...)):
