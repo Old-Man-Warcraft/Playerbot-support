@@ -33,6 +33,13 @@ def _message_content_to_text(content: Any) -> str:
                 continue
             if isinstance(item, dict):
                 text = item.get("text") or item.get("content")
+                if not isinstance(text, str):
+                    # Some OpenAI-compatible / aggregator APIs use alternate keys.
+                    for key in ("reasoning", "reasoning_content", "output_text", "value"):
+                        alt = item.get(key)
+                        if isinstance(alt, str) and alt.strip():
+                            text = alt
+                            break
                 if isinstance(text, str):
                     parts.append(text)
                     continue
@@ -434,16 +441,25 @@ class LLMService:
 
             # No tool calls — return final text
             if not tool_calls:
-                content = _message_content_to_text(choice.message.content)
+                content = _message_content_to_text(choice.message.content).strip()
+                refusal = getattr(choice.message, "refusal", None)
+                if not content and isinstance(refusal, str) and refusal.strip():
+                    content = refusal.strip()
+                if not content and not embeds:
+                    logger.warning(
+                        "LLM returned empty assistant message (model=%s, finish_reason=%s)",
+                        mdl,
+                        getattr(choice, "finish_reason", None),
+                    )
                 return {
-                    "content": content.strip(),
+                    "content": content,
                     "embeds": embeds,
                     "usage": {"prompt_tokens": total_prompt_tokens, "completion_tokens": total_completion_tokens},
                 }
 
             # Process tool calls
             messages.append(choice.message.model_dump())  # type: ignore[arg-type]
-            has_create_embed = False
+            embed_count_before = len(embeds)
             for tc in tool_calls:
                 fn_name = tc.function.name
                 try:
@@ -460,11 +476,10 @@ class LLMService:
 
                 # Collect embeds from create_embed calls
                 if fn_name == "create_embed":
-                    has_create_embed = True
                     try:
                         embeds.append(json.loads(result))
                     except json.JSONDecodeError:
-                        pass
+                        logger.warning("create_embed tool returned non-JSON; asking model again")
 
                 messages.append({
                     "role": "tool",
@@ -474,7 +489,7 @@ class LLMService:
 
             # create_embed is a terminal tool — return immediately with collected embeds
             # rather than looping back to the LLM (which causes duplicate embed spam)
-            if has_create_embed:
+            if len(embeds) > embed_count_before:
                 return {
                     "content": "",
                     "embeds": embeds,
