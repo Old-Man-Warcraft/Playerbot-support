@@ -104,8 +104,9 @@ async def _discord_post_message(channel_id: int, embed: dict, components: list |
             )
             if resp.status_code in (200, 201):
                 return resp.json()
-    except Exception:
-        pass
+            logger.error("Discord post failed %s: %s", resp.status_code, resp.text)
+    except Exception as exc:
+        logger.exception("Discord post exception: %s", exc)
     return None
 
 
