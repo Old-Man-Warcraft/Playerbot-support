@@ -2,12 +2,12 @@
 <html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>Sign In — Bot Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
   <style>
-    html, body { height: 100%; margin: 0; }
+    html, body { min-height: 100%; min-height: 100dvh; margin: 0; }
     body {
       background:
         radial-gradient(ellipse at top left,    rgba(79,124,255,0.18) 0%, transparent 42%),
@@ -16,6 +16,7 @@
         linear-gradient(160deg, #06101e 0%, #08121f 50%, #060e18 100%);
       display: flex; align-items: center; justify-content: center;
       font-family: system-ui, -apple-system, sans-serif;
+      padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
     }
     @keyframes float-in { from { opacity:0; transform: translateY(18px) scale(0.97); } to { opacity:1; transform: translateY(0) scale(1); } }
     .login-card { animation: float-in 0.45s cubic-bezier(.22,1,.36,1) both; }

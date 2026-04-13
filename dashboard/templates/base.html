@@ -2,7 +2,7 @@
 <html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Bot Dashboard{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -40,6 +40,7 @@
     ::-webkit-scrollbar-thumb { background: #2d3f56; border-radius: 999px; }
     ::-webkit-scrollbar-thumb:hover { background: #3d5472; }
     html, body { height: 100%; overflow: hidden; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       background:
         radial-gradient(ellipse at top left, rgba(79, 124, 255, 0.14) 0%, transparent 38%),
@@ -67,9 +68,16 @@
     @media (max-width: 767px) {
       #sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 50; transform: translateX(-100%); width: var(--sidebar-w) !important; }
       #sidebar.mobile-open { transform: translateX(0); }
-      #sidebar-backdrop { display: block; }
+      #sidebar-backdrop.is-open { display: block; }
     }
     #sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 40; backdrop-filter: blur(2px); }
+
+    /* Horizontal scroll regions (wide tables on small screens) */
+    .table-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+    }
 
     .sidebar-link {
       display: flex; align-items: center; gap: 0.65rem;
@@ -202,8 +210,18 @@
     /* ── Toast notifications ── */
     #toast-container {
       position: fixed; bottom: 1.5rem; right: 1.5rem;
+      left: auto; max-width: calc(100vw - 2rem);
       display: flex; flex-direction: column; gap: 0.6rem;
       z-index: 9999; pointer-events: none;
+    }
+    @media (max-width: 767px) {
+      #toast-container {
+        left: max(1rem, env(safe-area-inset-left, 0px));
+        right: max(1rem, env(safe-area-inset-right, 0px));
+        bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+        max-width: none;
+      }
+      .toast { min-width: 0; width: 100%; max-width: 100%; }
     }
     .toast {
       display: flex; align-items: center; gap: 0.75rem;
@@ -226,7 +244,7 @@
     .toast-close:hover { opacity: 1; }
 
     /* ── Breadcrumb ── */
-    .breadcrumb { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: #4d6485; }
+    .breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; font-size: 0.78rem; color: #4d6485; min-width: 0; max-width: 100%; }
     .breadcrumb a { color: #5a7aaa; text-decoration: none; transition: color 0.12s; }
     .breadcrumb a:hover { color: #93b4e8; }
     .breadcrumb .sep { font-size: 0.65rem; }
@@ -237,7 +255,7 @@
   </style>
   {% block head_extra %}{% endblock %}
 </head>
-<body class="h-full text-white flex overflow-hidden">
+<body class="h-full min-h-0 text-white flex overflow-hidden">
 
 <!-- Mobile backdrop -->
 <div id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
@@ -246,7 +264,7 @@
 <div id="toast-container"></div>
 
 <!-- Sidebar -->
-<aside id="sidebar" class="flex-shrink-0 bg-[#0b1526] border-r border-[rgba(148,163,184,0.10)] flex flex-col h-screen sticky top-0 overflow-y-auto overflow-x-hidden z-40">
+<aside id="sidebar" class="flex-shrink-0 bg-[#0b1526] border-r border-[rgba(148,163,184,0.10)] flex flex-col h-screen sticky top-0 overflow-y-auto overflow-x-hidden z-40 pb-[env(safe-area-inset-bottom,0px)]">
 
   <!-- Logo / Wordmark -->
   <div class="px-3 py-4 border-b border-[rgba(148,163,184,0.08)] flex items-center gap-2.5 min-h-[60px]">
@@ -359,19 +377,19 @@
 </aside>
 
 <!-- Main content area -->
-<div class="flex-1 flex flex-col min-h-screen overflow-auto">
+<div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-auto">
 
   <!-- Top bar -->
-  <header class="bg-[rgba(9,17,31,0.88)] backdrop-blur-md border-b border-[rgba(148,163,184,0.10)] px-5 py-0 flex items-center gap-3 sticky top-0 z-30 min-h-[56px]">
+  <header class="bg-[rgba(9,17,31,0.88)] backdrop-blur-md border-b border-[rgba(148,163,184,0.10)] py-0 pt-[env(safe-area-inset-top,0px)] pl-[max(1.25rem,env(safe-area-inset-left,0px))] pr-[max(1.25rem,env(safe-area-inset-right,0px))] flex items-center gap-3 sticky top-0 z-30 min-h-[56px]">
 
     <!-- Mobile hamburger -->
-    <button class="md:hidden flex items-center justify-center w-8 h-8 rounded-lg text-[#5a7aaa] hover:text-white hover:bg-[rgba(255,255,255,0.07)] transition-colors"
+    <button class="md:hidden flex items-center justify-center min-h-11 min-w-11 rounded-lg text-[#5a7aaa] hover:text-white hover:bg-[rgba(255,255,255,0.07)] transition-colors -ml-1"
             onclick="openMobileSidebar()" aria-label="Open menu">
       <i class="fa fa-bars text-sm"></i>
     </button>
 
     <!-- Breadcrumb / page title -->
-    <div class="flex flex-col justify-center">
+    <div class="flex flex-col justify-center min-w-0 flex-1 md:flex-none">
       {% if breadcrumbs is defined and breadcrumbs %}
       <div class="breadcrumb">
         <a href="/"><i class="fa fa-house" style="font-size:0.68rem;"></i></a>
@@ -381,7 +399,7 @@
         {% endfor %}
       </div>
       {% endif %}
-      <h1 class="text-[0.95rem] font-semibold text-white leading-tight">{% block header %}Dashboard{% endblock %}</h1>
+      <h1 class="text-[0.95rem] font-semibold text-white leading-tight truncate">{% block header %}Dashboard{% endblock %}</h1>
     </div>
 
     <!-- Right-side topbar items -->
@@ -401,7 +419,7 @@
 
   <!-- Flash messages -->
   {% if flash_messages is defined %}
-  <div class="px-5 pt-3 space-y-2">
+  <div class="pt-3 space-y-2 pl-[max(1.25rem,env(safe-area-inset-left,0px))] pr-[max(1.25rem,env(safe-area-inset-right,0px))]">
     {% for msg in flash_messages %}
     <div class="flash-msg flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm border
       {% if msg.type == 'success' %}bg-green-900/25 border-green-700/35 text-green-300
@@ -416,7 +434,7 @@
   </div>
   {% endif %}
 
-  <main class="flex-1 p-5 md:p-6 overflow-auto">
+  <main class="flex-1 p-5 md:p-6 pl-[max(1.25rem,env(safe-area-inset-left,0px))] pr-[max(1.25rem,env(safe-area-inset-right,0px))] pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] overflow-auto">
     {% block content %}{% endblock %}
   </main>
 </div>

@@ -44,14 +44,15 @@
   </div>
 
   <!-- Tickets table -->
-  <div class="flex-1">
+  <div class="flex-1 min-w-0">
     <div class="card overflow-hidden">
-      <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-        <h2 class="font-semibold text-white">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 gap-2">
+        <h2 class="font-semibold text-white min-w-0 truncate">
           {% if guild_id %}Tickets for <span class="font-mono text-[#5865F2]">{{ guild_id }}</span>{% else %}All Tickets{% endif %}
         </h2>
-        <span class="text-xs text-gray-500">{{ tickets|length }} shown</span>
+        <span class="text-xs text-gray-500 flex-shrink-0">{{ tickets|length }} shown</span>
       </div>
+  <div class="table-scroll">
   <table class="w-full text-sm">
     <thead>
       <tr class="text-left text-gray-500 text-xs border-b border-gray-800">
@@ -89,5 +90,8 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
