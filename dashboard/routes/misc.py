@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from dashboard.helpers import (
@@ -69,6 +69,22 @@ def init(templates: Jinja2Templates) -> APIRouter:
         await require_guild_access(request, guild_id)
         await db_execute("DELETE FROM command_permissions WHERE id = ? AND guild_id = ?", (permission_id, guild_id))
         return RedirectResponse(f"/permissions?guild_id={guild_id}", status_code=302)
+
+    @router.post("/permissions/toggle")
+    async def permissions_toggle(
+        request: Request,
+        guild_id: int = Form(...),
+        permission_id: int = Form(...),
+        allowed: int = Form(...),
+    ):
+        if r := auth_redirect(request):
+            return r
+        await require_guild_access(request, guild_id)
+        await db_execute(
+            "UPDATE command_permissions SET allowed = ? WHERE id = ? AND guild_id = ?",
+            (allowed, permission_id, guild_id),
+        )
+        return JSONResponse({"ok": True, "allowed": allowed})
 
     # ── Reports ───────────────────────────────────────────────────────
 
