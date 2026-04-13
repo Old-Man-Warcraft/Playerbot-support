@@ -272,6 +272,16 @@ class MCPManager:
                 await conn.connect()
                 self._connections[key] = conn
                 return True
+            except FileNotFoundError as exc:
+                cmd = (config.command or "").split()[0] if config.command else "<unknown>"
+                logger.warning(
+                    "MCP server '%s' (guild=%d): command not found — '%s' is not installed or not on PATH. "
+                    "Update the server config or install the required runtime.",
+                    config.name,
+                    config.guild_id,
+                    cmd,
+                )
+                return False
             except Exception:
                 logger.exception(
                     "Failed to connect MCP server '%s' for guild %d",
