@@ -157,7 +157,7 @@ class BaseDatabase:
         giveaway_cols = {row[1] for row in await cur.fetchall()}
         for col, defn in [
             ("message_id", "INTEGER"),
-            ("created_at", "TEXT NOT NULL DEFAULT (datetime('now'))"),
+            ("created_at", "TEXT"),
         ]:
             if col not in giveaway_cols:
                 await self._db.execute(  # type: ignore[union-attr]
