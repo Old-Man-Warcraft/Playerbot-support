@@ -121,7 +121,11 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
         rows = await self.db.get_active_giveaways()
         for row in rows:
             view = GiveawayEntryView(self, row["id"])
-            self.bot.add_view(view, message_id=row["message_id"])
+            msg_id = row["message_id"]
+            if msg_id:
+                self.bot.add_view(view, message_id=int(msg_id))
+            else:
+                self.bot.add_view(view)
             self._active_views[row["id"]] = view
 
     # ------------------------------------------------------------------
@@ -133,6 +137,14 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
         now = datetime.now(timezone.utc).isoformat()
         rows = await self.db.get_active_giveaways()
         for row in rows:
+            if row["id"] not in self._active_views:
+                view = GiveawayEntryView(self, row["id"])
+                msg_id = row["message_id"]
+                if msg_id:
+                    self.bot.add_view(view, message_id=int(msg_id))
+                else:
+                    self.bot.add_view(view)
+                self._active_views[row["id"]] = view
             if row["end_time"] <= now:
                 await self._end_giveaway(row["id"])
 
