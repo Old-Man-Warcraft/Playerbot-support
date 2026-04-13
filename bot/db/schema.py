@@ -417,6 +417,19 @@ CREATE TABLE IF NOT EXISTS join_tracking (
 );
 CREATE INDEX IF NOT EXISTS idx_join_tracking_guild_time ON join_tracking (guild_id, joined_at DESC);
 
+-- ── Reaction roles ─────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS reaction_roles (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    message_id  INTEGER NOT NULL,
+    channel_id  INTEGER NOT NULL,
+    emoji       TEXT    NOT NULL,
+    role_id     INTEGER NOT NULL,
+    unique_role INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(guild_id, message_id, emoji)
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_roles_guild ON reaction_roles (guild_id, message_id);
+
 -- ── MCP ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
