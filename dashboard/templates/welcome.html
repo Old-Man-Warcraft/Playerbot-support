@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Welcome Settings — Bot Dashboard{% endblock %}
+{% block header %}Welcome Settings{% endblock %}
+
+{% block content %}
+<div class="flex flex-col xl:flex-row gap-6">
+  <div class="w-full xl:w-64 flex-shrink-0">
+    <div class="card p-4">
+      <h3 class="text-sm font-semibold text-gray-300 mb-3">Select Guild</h3>
+      <div class="space-y-1">
+        {% for g in guilds %}
+        <a href="/welcome?guild_id={{ g.guild_id }}"
+           class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {% if guild_id == g.guild_id %}bg-[#5865F2]/20 text-white border border-[#5865F2]/30{% else %}text-gray-400 hover:bg-gray-800 hover:text-white{% endif %}"
+           style="text-decoration:none;">
+          <i class="fa fa-server text-xs"></i>
+          <span class="font-mono">{{ g.guild_id }}</span>
+        </a>
+        {% else %}
+        <p class="text-gray-500 text-xs text-center py-4">No guilds found</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="flex-1 min-w-0 space-y-6">
+    {% if not guild_id %}
+    <div class="card p-12 text-center">
+      <i class="fa fa-door-open text-4xl text-gray-700 mb-3"></i>
+      <p class="text-gray-400">Select a guild to configure welcome messages, auto-role, and verification.</p>
+    </div>
+    {% else %}
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Welcome channel</p>
+        <p class="text-sm font-semibold text-white mt-1 font-mono truncate">{{ config_values.get('welcome_channel', '—') }}</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Auto-role</p>
+        <p class="text-sm font-semibold text-white mt-1 font-mono truncate">{{ config_values.get('autorole', '—') }}</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Verified role</p>
+        <p class="text-sm font-semibold text-white mt-1 font-mono truncate">{{ config_values.get('verified_role', '—') }}</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-gray-500">Custom message</p>
+        <p class="text-sm font-semibold mt-1 {{ 'text-green-400' if config_values.get('welcome_message') else 'text-gray-500' }}">
+          {{ 'Configured' if config_values.get('welcome_message') else 'Default' }}
+        </p>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <div class="mb-5">
+        <h2 class="font-semibold text-white">Welcome configuration</h2>
+        <p class="text-sm text-gray-500 mt-1">
+          Configure the channel, message template, and role assignments for new members.
+          Leave a field blank to clear / use the default.
+        </p>
+      </div>
+
+      <form method="post" action="/welcome/save" class="space-y-5">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div class="field-stack">
+            <label class="text-xs text-gray-500">Welcome channel ID</label>
+            <input class="input" type="text" name="welcome_channel"
+                   value="{{ config_values.get('welcome_channel', '') }}"
+                   placeholder="Channel ID e.g. 123456789012345678"/>
+            <span class="helper-text">The channel where join messages are sent.</span>
+          </div>
+
+          <div class="field-stack">
+            <label class="text-xs text-gray-500">Auto-role ID</label>
+            <input class="input" type="text" name="autorole"
+                   value="{{ config_values.get('autorole', '') }}"
+                   placeholder="Role ID e.g. 123456789012345678"/>
+            <span class="helper-text">Role automatically assigned when a member joins.</span>
+          </div>
+
+          <div class="field-stack">
+            <label class="text-xs text-gray-500">Verified role ID</label>
+            <input class="input" type="text" name="verified_role"
+                   value="{{ config_values.get('verified_role', '') }}"
+                   placeholder="Role ID e.g. 123456789012345678"/>
+            <span class="helper-text">Role granted when a member accepts the rules panel.</span>
+          </div>
+        </div>
+
+        <div class="field-stack">
+          <label class="text-xs text-gray-500">Welcome message template</label>
+          <textarea class="input resize-y" rows="4" name="welcome_message"
+                    placeholder="Welcome to **{server}**, {user}! 🎉">{{ config_values.get('welcome_message', '') }}</textarea>
+          <div class="flex flex-wrap gap-2 mt-1">
+            <span class="helper-text">Available placeholders:</span>
+            <span class="kbd-pill">{user}</span>
+            <span class="kbd-pill">{username}</span>
+            <span class="kbd-pill">{server}</span>
+          </div>
+          <span class="helper-text">Leave blank to use the default: <em>Welcome to <strong>{server}</strong>, {user}! 🎉</em></span>
+        </div>
+
+        {% if config_values.get('welcome_message') %}
+        <div class="rounded-lg border border-[rgba(79,124,255,0.25)] bg-[rgba(79,124,255,0.07)] p-4">
+          <p class="text-xs text-gray-400 mb-1 font-semibold uppercase tracking-wide">Current message preview</p>
+          <p class="text-sm text-gray-200">{{ config_values.get('welcome_message') }}</p>
+        </div>
+        {% endif %}
+
+        <div class="flex justify-end">
+          <button class="btn-primary" type="submit"><i class="fa fa-save"></i> Save changes</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card p-5">
+      <h2 class="font-semibold text-white mb-2">Placeholder reference</h2>
+      <p class="text-sm text-gray-500 mb-4">Use these placeholders in your welcome message template.</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+          <p class="text-xs text-gray-400 mb-1">Placeholder</p>
+          <code class="text-sm text-blue-300">{user}</code>
+          <p class="text-xs text-gray-500 mt-1">Replaced with a mention of the new member (e.g. @Username).</p>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+          <p class="text-xs text-gray-400 mb-1">Placeholder</p>
+          <code class="text-sm text-blue-300">{username}</code>
+          <p class="text-xs text-gray-500 mt-1">Replaced with the member's display name (no mention).</p>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+          <p class="text-xs text-gray-400 mb-1">Placeholder</p>
+          <code class="text-sm text-blue-300">{server}</code>
+          <p class="text-xs text-gray-500 mt-1">Replaced with the server name.</p>
+        </div>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
