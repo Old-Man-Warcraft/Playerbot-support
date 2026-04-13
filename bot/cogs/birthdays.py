@@ -37,78 +37,12 @@ class BirthdayCog(commands.Cog, name="Birthdays"):
         self.birthday_check_task.cancel()
 
     # ------------------------------------------------------------------
-    # Tasks
+    # Birthday command group
     # ------------------------------------------------------------------
 
-    @tasks.loop(hours=1)
-    async def birthday_check_task(self) -> None:
-        """Check for birthdays and send announcements."""
-        await self.bot.wait_until_ready()
-        
-        # Get current date in UTC (can be enhanced for timezone support)
-        today = datetime.now(timezone.utc).strftime("%m-%d")
-        today_full = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        
-        for guild in self.bot.guilds:
-            # Check if birthday channel is configured
-            channel_id_raw = await self.db.get_guild_config(guild.id, "birthday_channel")
-            if not channel_id_raw:
-                continue
-            
-            channel = guild.get_channel(int(channel_id_raw))
-            if not isinstance(channel, discord.TextChannel):
-                continue
-            
-            # Get birthdays for today
-            birthdays = await self.db.get_birthdays_by_date(guild.id, today)
-            
-            if not birthdays:
-                continue
-            
-            # Send birthday announcements
-            for birthday in birthdays:
-                user = guild.get_member(birthday["user_id"])
-                if not user:
-                    continue
-                
-                # Check if we already announced today
-                if await self.db.check_birthday_announced(guild.id, user.id, today_full):
-                    continue
-                
-                # Calculate age (if possible - this is approximate)
-                # Note: We don't store the year, so we can't calculate actual age
-                # This is a privacy consideration
-                
-                # Send birthday message
-                try:
-                    embed = discord.Embed(
-                        title="🎂 Birthday Alert!",
-                        description=f"Happy birthday to {user.mention}! 🎉",
-                        color=discord.Color.pink(),
-                    )
-                    embed.set_thumbnail(url=user.display_avatar.url)
-                    embed.set_footer(text=f"Member #{guild.member_count}")
-                    
-                    await channel.send(content="@everyone", embed=embed)
-                    
-                    # Record that we sent the announcement
-                    await self.db.record_birthday_announcement(guild.id, user.id, today_full)
-                    
-                    logger.info(f"Sent birthday announcement for {user} in {guild.name}")
-                except discord.Forbidden:
-                    logger.warning(f"Cannot send birthday message in {guild.name}")
-            
-            # Clean up old announcement records
-            await self.db.cleanup_old_birthday_announcements(guild.id)
+    birthday_group = app_commands.Group(name="birthday", description="Birthday tracking and celebrations")
 
-    # ------------------------------------------------------------------
-    # Slash commands
-    # ------------------------------------------------------------------
-
-    @app_commands.command(
-        name="set_birthday",
-        description="Set your birthday for automatic birthday announcements"
-    )
+    @birthday_group.command(name="set", description="Set your birthday for automatic birthday announcements")
     @app_commands.describe(
         month="Month (1-12)",
         day="Day (1-31)"
@@ -152,10 +86,7 @@ class BirthdayCog(commands.Cog, name="Birthdays"):
                 ephemeral=True,
             )
 
-    @app_commands.command(
-        name="remove_birthday",
-        description="Remove your birthday from tracking"
-    )
+    @birthday_group.command(name="remove", description="Remove your birthday from tracking")
     async def remove_birthday(self, interaction: discord.Interaction) -> None:
         """Remove your birthday."""
         if await self.db.remove_birthday(interaction.guild_id, interaction.user.id):  # type: ignore[arg-type]
@@ -169,10 +100,7 @@ class BirthdayCog(commands.Cog, name="Birthdays"):
                 ephemeral=True,
             )
 
-    @app_commands.command(
-        name="my_birthday",
-        description="Check your birthday setting"
-    )
+    @birthday_group.command(name="mine", description="Check your birthday setting")
     async def my_birthday(self, interaction: discord.Interaction) -> None:
         """Check your birthday setting."""
         birthday = await self.db.get_birthday(interaction.guild_id, interaction.user.id)  # type: ignore[arg-type]
@@ -192,10 +120,7 @@ class BirthdayCog(commands.Cog, name="Birthdays"):
             ephemeral=True,
         )
 
-    @app_commands.command(
-        name="set_birthday_channel",
-        description="Set the channel for birthday announcements"
-    )
+    @birthday_group.command(name="channel", description="Set the channel for birthday announcements")
     @app_commands.describe(channel="Channel to send birthday announcements in")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def set_birthday_channel(
@@ -210,10 +135,7 @@ class BirthdayCog(commands.Cog, name="Birthdays"):
             ephemeral=True,
         )
 
-    @app_commands.command(
-        name="upcoming_birthdays",
-        description="Show upcoming birthdays in the server"
-    )
+    @birthday_group.command(name="upcoming", description="Show upcoming birthdays in the server")
     async def upcoming_birthdays(self, interaction: discord.Interaction) -> None:
         """Show upcoming birthdays."""
         guild = interaction.guild
@@ -283,7 +205,7 @@ class BirthdayCog(commands.Cog, name="Birthdays"):
                 value=f"{month_name} {bday['day']} - {time_text}",
                 inline=False,
             )
-        
+
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

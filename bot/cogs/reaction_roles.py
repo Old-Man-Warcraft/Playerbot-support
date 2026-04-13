@@ -89,13 +89,12 @@ class ReactionRolesCog(commands.Cog, name="Reaction Roles"):
         self.bot.add_view(ReactionRoleView(self))
 
     # ------------------------------------------------------------------
-    # /reaction_role create
+    # Reaction role command group
     # ------------------------------------------------------------------
 
-    @app_commands.command(
-        name="reaction_role_create",
-        description="Create a reaction role message with emoji-to-role mappings"
-    )
+    reaction_group = app_commands.Group(name="rr", description="Reaction role management")
+
+    @reaction_group.command(name="create", description="Create a reaction role message")
     @app_commands.describe(
         channel="Channel to send the message in",
         title="Title of the reaction role message",
@@ -104,7 +103,7 @@ class ReactionRolesCog(commands.Cog, name="Reaction Roles"):
         unique="Whether users can only have one role from this message"
     )
     @app_commands.checks.has_permissions(manage_roles=True)
-    async def create_reaction_role(
+    async def create(
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
@@ -207,19 +206,14 @@ class ReactionRolesCog(commands.Cog, name="Reaction Roles"):
                 ephemeral=True,
             )
 
-    # ------------------------------------------------------------------
-    # /reaction_role add
-    # ------------------------------------------------------------------
+    reaction_role_group = reaction_group.group(name="reaction_role", description="Manage reaction roles on a message")
 
-    @app_commands.command(
-        name="reaction_role_add",
-        description="Add a reaction role to an existing message"
-    )
+    @reaction_role_group.command(name="add", description="Add a reaction role to an existing message")
     @app_commands.describe(
         message="Message to add reaction role to (right-click > Copy Message Link)",
         emoji="Emoji to use for the role",
-        role="Role to assign when emoji is clicked",
-        unique="Whether this role is unique (removes other roles from this message)"
+        role="Role to assign when emoji is reacted",
+        unique="Whether to remove other roles from this message when adding"
     )
     @app_commands.checks.has_permissions(manage_roles=True)
     async def add_reaction_role(

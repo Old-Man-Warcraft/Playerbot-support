@@ -326,6 +326,33 @@ CREATE TABLE IF NOT EXISTS birthdays (
 );
 CREATE INDEX IF NOT EXISTS idx_birthdays_guild ON birthdays (guild_id, birthday);
 
+-- Social media alerts system
+CREATE TABLE IF NOT EXISTS social_alerts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    platform        TEXT    NOT NULL,  -- youtube, twitch, reddit, rss
+    account_id      TEXT    NOT NULL,  -- Channel name, subreddit, RSS URL
+    alert_type      TEXT    NOT NULL,  -- upload, stream, post, new
+    message_template TEXT,  -- Custom message template
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    last_alert_at   TEXT,                   -- Last time an alert was sent
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, platform, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_alerts_guild ON social_alerts (guild_id, platform);
+
+-- Social media alert history (to prevent duplicate alerts)
+CREATE TABLE IF NOT EXISTS social_alert_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL,
+    alert_id        INTEGER NOT NULL,
+    content_id      TEXT    NOT NULL,  -- Video ID, post ID, etc.
+    alerted_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, alert_id, content_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_alert_history_guild ON social_alert_history (guild_id, alert_id, content_id);
+
 -- Birthday announcements sent (to prevent duplicate announcements in a day)
 CREATE TABLE IF NOT EXISTS birthday_announcements (
     guild_id    INTEGER NOT NULL,
@@ -2817,6 +2844,110 @@ class Database:
         """Clean up old birthday announcement records."""
         cur = await self.conn.execute(
             "DELETE FROM birthday_announcements WHERE guild_id = ? AND date_sent < date('now', '-{} days')".format(days),
+            (guild_id,),
+        )
+        await self.conn.commit()
+        return cur.rowcount
+
+    # ------------------------------------------------------------------
+    # Social Media Alerts
+    # ------------------------------------------------------------------
+
+    async def add_social_alert(
+        self,
+        guild_id: int,
+        channel_id: int,
+        platform: str,
+        account_id: str,
+        alert_type: str,
+        message_template: str | None = None,
+    ) -> bool:
+        """Add a social media alert."""
+        try:
+            await self.conn.execute(
+                """INSERT INTO social_alerts 
+                (guild_id, channel_id, platform, account_id, alert_type, message_template) 
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (guild_id, channel_id, platform, account_id, alert_type, message_template),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def remove_social_alert(self, guild_id: int, alert_id: int) -> bool:
+        """Remove a social media alert."""
+        cur = await self.conn.execute(
+            "DELETE FROM social_alerts WHERE guild_id = ? AND id = ?",
+            (guild_id, alert_id),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def get_social_alerts(self, guild_id: int, platform: str | None = None):
+        """Get social media alerts for a guild."""
+        if platform:
+            cur = await self.conn.execute(
+                "SELECT * FROM social_alerts WHERE guild_id = ? AND platform = ? AND enabled = 1",
+                (guild_id, platform),
+            )
+        else:
+            cur = await self.conn.execute(
+                "SELECT * FROM social_alerts WHERE guild_id = ? AND enabled = 1 ORDER BY created_at DESC",
+                (guild_id,),
+            )
+        return await cur.fetchall()
+
+    async def toggle_social_alert(self, guild_id: int, alert_id: int) -> bool | None:
+        """Toggle a social media alert on/off."""
+        cur = await self.conn.execute(
+            "SELECT enabled FROM social_alerts WHERE guild_id = ? AND id = ?",
+            (guild_id, alert_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        
+        new_value = 0 if row["enabled"] else 1
+        await self.conn.execute(
+            "UPDATE social_alerts SET enabled = ? WHERE guild_id = ? AND id = ?",
+            (new_value, guild_id, alert_id),
+        )
+        await self.conn.commit()
+        return bool(new_value)
+
+    async def record_social_alert(self, guild_id: int, alert_id: int, content_id: str) -> bool:
+        """Record that an alert was sent for specific content."""
+        try:
+            await self.conn.execute(
+                "INSERT INTO social_alert_history (guild_id, alert_id, content_id) VALUES (?, ?, ?)",
+                (guild_id, alert_id, content_id),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False  # Already recorded
+
+    async def check_social_alerted(self, guild_id: int, alert_id: int, content_id: str) -> bool:
+        """Check if an alert was already sent for specific content."""
+        cur = await self.conn.execute(
+            "SELECT 1 FROM social_alert_history WHERE guild_id = ? AND alert_id = ? AND content_id = ?",
+            (guild_id, alert_id, content_id),
+        )
+        return await cur.fetchone() is not None
+
+    async def update_alert_timestamp(self, guild_id: int, alert_id: int) -> None:
+        """Update the last alert timestamp."""
+        await self.conn.execute(
+            "UPDATE social_alerts SET last_alert_at = datetime('now') WHERE guild_id = ? AND id = ?",
+            (guild_id, alert_id),
+        )
+        await self.conn.commit()
+
+    async def cleanup_old_alert_history(self, guild_id: int, days: int = 30):
+        """Clean up old alert history records."""
+        cur = await self.conn.execute(
+            "DELETE FROM social_alert_history WHERE guild_id = ? AND alerted_at < datetime('now', '-{} days')".format(days),
             (guild_id,),
         )
         await self.conn.commit()

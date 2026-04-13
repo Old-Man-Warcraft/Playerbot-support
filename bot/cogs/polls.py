@@ -112,13 +112,12 @@ class PollsCog(commands.Cog, name="Polls"):
         self.db = db
 
     # ------------------------------------------------------------------
-    # /poll create
+    # Poll command group
     # ------------------------------------------------------------------
 
-    @app_commands.command(
-        name="poll_create",
-        description="Create an interactive poll with voting buttons"
-    )
+    poll_group = app_commands.Group(name="poll", description="Interactive voting polls")
+
+    @poll_group.command(name="create", description="Create an interactive poll with voting buttons")
     @app_commands.describe(
         question="The poll question",
         options="Poll options (comma-separated, max 20)",
@@ -237,14 +236,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 ephemeral=True,
             )
 
-    # ------------------------------------------------------------------
-    # /poll end
-    # ------------------------------------------------------------------
-
-    @app_commands.command(
-        name="poll_end",
-        description="End a poll and show final results"
-    )
+    @poll_group.command(name="end", description="End a poll and show final results")
     @app_commands.describe(
         message="Poll message to end (right-click > Copy Message Link)"
     )
@@ -338,14 +330,7 @@ class PollsCog(commands.Cog, name="Polls"):
             ephemeral=True,
         )
 
-    # ------------------------------------------------------------------
-    # /poll list
-    # ------------------------------------------------------------------
-
-    @app_commands.command(
-        name="poll_list",
-        description="List all active polls in the server"
-    )
+    @poll_group.command(name="list", description="List all active polls in the server")
     async def list_polls(self, interaction: discord.Interaction) -> None:
         """List all active polls in the server."""
         guild = interaction.guild

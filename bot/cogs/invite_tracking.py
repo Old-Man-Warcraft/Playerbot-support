@@ -39,97 +39,12 @@ class InviteTrackingCog(commands.Cog, name="Invite Tracking"):
         self.update_invites_task.cancel()
 
     # ------------------------------------------------------------------
-    # Tasks
+    # Invite tracking command group
     # ------------------------------------------------------------------
 
-    @tasks.loop(minutes=5)
-    async def update_invites_task(self) -> None:
-        """Periodically update invite cache."""
-        await self.bot.wait_until_ready()
-        
-        for guild in self.bot.guilds:
-            if guild.me.guild_permissions.manage_guild:
-                try:
-                    invites = await guild.invites()
-                    invite_dict = {invite.code: invite for invite in invites}
-                    self._invite_cache[guild.id] = invite_dict
-                    await self.db.update_invite_codes(guild.id, invites)
-                except discord.Forbidden:
-                    logger.warning(f"Cannot fetch invites for guild {guild.name}")
+    invite_group = app_commands.Group(name="invite", description="Invite tracking and analytics")
 
-    # ------------------------------------------------------------------
-    # Event listeners
-    # ------------------------------------------------------------------
-
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member) -> None:
-        """Track which invite a member used."""
-        guild = member.guild
-        
-        if not guild.me.guild_permissions.manage_guild:
-            return
-
-        try:
-            # Get current invites
-            current_invites = await guild.invites()
-            current_dict = {invite.code: invite for invite in current_invites}
-            
-            # Get cached invites from before the join
-            cached_invites = self._invite_cache.get(guild.id, {})
-            
-            # Find which invite was used
-            used_invite = None
-            for code, invite in current_dict.items():
-                cached_invite = cached_invites.get(code)
-                if cached_invite and invite.uses > cached_invite.uses:
-                    used_invite = invite
-                    break
-                elif not cached_invite and invite.uses > 0:
-                    # New invite that wasn't in cache
-                    used_invite = invite
-                    break
-
-            # Update cache
-            self._invite_cache[guild.id] = current_dict
-
-            # Track the invite use
-            if used_invite and used_invite.inviter:
-                account_created = member.created_at.isoformat() if member.created_at else None
-                success = await self.db.track_invite_use(
-                    guild.id,
-                    used_invite.code,
-                    member.id,
-                    used_invite.inviter.id,
-                    account_created,
-                )
-                
-                if success:
-                    logger.info(
-                        f"Tracked invite: {member} joined via {used_invite.code} "
-                        f"invited by {used_invite.inviter}"
-                    )
-                else:
-                    logger.debug(f"User {member} already tracked for guild {guild.name}")
-
-        except discord.Forbidden:
-            logger.warning(f"Cannot track invites for guild {guild.name} - missing permissions")
-        except Exception as e:
-            logger.error(f"Error tracking invite for {member}: {e}")
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member) -> None:
-        """Track when a member leaves."""
-        guild = member.guild
-        await self.db.mark_user_left(guild.id, member.id)
-
-    # ------------------------------------------------------------------
-    # Slash commands
-    # ------------------------------------------------------------------
-
-    @app_commands.command(
-        name="invites",
-        description="Show invite statistics for the server or a specific user"
-    )
+    @invite_group.command(name="stats", description="Show invite statistics for the server or a specific user")
     @app_commands.describe(
         user="User to check invite stats for (leave empty for server-wide stats)"
     )
@@ -217,10 +132,7 @@ class InviteTrackingCog(commands.Cog, name="Invite Tracking"):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(
-        name="invite_source",
-        description="Check how a specific user joined the server"
-    )
+    @invite_group.command(name="source", description="Check how a specific user joined the server")
     @app_commands.describe(
         user="User to check join source for"
     )
@@ -275,10 +187,7 @@ class InviteTrackingCog(commands.Cog, name="Invite Tracking"):
         embed.set_footer(text=f"User ID: {user.id}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(
-        name="recent_invites",
-        description="Show recent invite activity in the server"
-    )
+    @invite_group.command(name="recent", description="Show recent invite activity in the server")
     @app_commands.describe(
         days="Number of days to look back (1-30, default: 7)"
     )
@@ -348,10 +257,7 @@ class InviteTrackingCog(commands.Cog, name="Invite Tracking"):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(
-        name="sync_invites",
-        description="Manually sync the invite cache with current server invites"
-    )
+    @invite_group.command(name="sync", description="Manually sync the invite cache with current server invites")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def sync_invites(self, interaction: discord.Interaction) -> None:
         """Manually sync invite data."""
