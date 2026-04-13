@@ -20,6 +20,7 @@ from .moderation import ModerationRepo
 from .permissions import PermissionsRepo
 from .reports import ReportsRepo
 from .support import SupportRepo
+from .social_alerts import SocialAlertsRepo
 from .tickets import TicketsRepo
 
 
@@ -39,6 +40,7 @@ class Database(BaseDatabase):
     _reports: ReportsRepo
     _integrations: IntegrationsRepo
     _mcp: MCPRepo
+    _social_alerts: SocialAlertsRepo
 
     async def setup(self) -> None:
         await super().setup()
@@ -55,6 +57,7 @@ class Database(BaseDatabase):
         self._reports = ReportsRepo(c)
         self._integrations = IntegrationsRepo(c)
         self._mcp = MCPRepo(c)
+        self._social_alerts = SocialAlertsRepo(c)
 
     # ── Guild config ──────────────────────────────────────────────────
 
@@ -555,3 +558,29 @@ class Database(BaseDatabase):
 
     async def update_mcp_server(self, guild_id, name, *, transport=None, command=None, args=None, env=None, url=None):
         return await self._mcp.update_mcp_server(guild_id, name, transport=transport, command=command, args=args, env=env, url=url)
+
+    # ── Social alerts ─────────────────────────────────────────────────
+
+    async def add_social_alert(self, guild_id, channel_id, platform, account_id, alert_type, message_template):
+        return await self._social_alerts.add_social_alert(guild_id, channel_id, platform, account_id, alert_type, message_template)
+
+    async def get_social_alerts(self, guild_id):
+        return await self._social_alerts.get_social_alerts(guild_id)
+
+    async def get_all_enabled_social_alerts(self):
+        return await self._social_alerts.get_all_enabled_social_alerts()
+
+    async def remove_social_alert(self, guild_id, alert_id):
+        return await self._social_alerts.remove_social_alert(guild_id, alert_id)
+
+    async def toggle_social_alert(self, guild_id, alert_id):
+        return await self._social_alerts.toggle_social_alert(guild_id, alert_id)
+
+    async def check_alert_history(self, alert_id, content_id):
+        return await self._social_alerts.check_alert_history(alert_id, content_id)
+
+    async def record_alert_history(self, guild_id, alert_id, content_id):
+        return await self._social_alerts.record_alert_history(guild_id, alert_id, content_id)
+
+    async def cleanup_alert_history(self, days=30):
+        return await self._social_alerts.cleanup_alert_history(days)

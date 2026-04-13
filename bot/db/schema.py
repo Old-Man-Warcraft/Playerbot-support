@@ -357,6 +357,31 @@ CREATE TABLE IF NOT EXISTS gitlab_poll_state (
     PRIMARY KEY (project, event_type)
 );
 
+-- ── Social alerts ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS social_alerts (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id         INTEGER NOT NULL,
+    channel_id       INTEGER NOT NULL,
+    platform         TEXT    NOT NULL DEFAULT 'rss',
+    account_id       TEXT    NOT NULL,
+    alert_type       TEXT    NOT NULL DEFAULT 'new',
+    message_template TEXT    NOT NULL DEFAULT '📰 **{title}**\n{link}',
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(guild_id, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_alerts_guild ON social_alerts (guild_id);
+
+CREATE TABLE IF NOT EXISTS social_alert_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    alert_id    INTEGER NOT NULL,
+    content_id  TEXT    NOT NULL,
+    sent_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(alert_id, content_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_alert_history_guild ON social_alert_history (guild_id, alert_id, content_id);
+
 -- ── MCP ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

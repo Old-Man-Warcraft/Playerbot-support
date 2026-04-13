@@ -40,6 +40,69 @@ class SocialAlertsCog(commands.Cog, name="Social Alerts"):
         self.feed_check_task.cancel()
 
     # ------------------------------------------------------------------
+    # Background task: poll RSS feeds every 15 minutes
+    # ------------------------------------------------------------------
+
+    @tasks.loop(minutes=15)
+    async def feed_check_task(self) -> None:
+        """Poll all enabled RSS feeds and send alerts for new items."""
+        alerts = await self.db.get_all_enabled_social_alerts()
+        if not alerts:
+            return
+
+        async with aiohttp.ClientSession() as session:
+            for alert in alerts:
+                try:
+                    await self._process_alert(session, alert)
+                except Exception as e:
+                    logger.error("Error processing alert %s: %s", alert["id"], e)
+
+        await self.db.cleanup_alert_history()
+
+    @feed_check_task.before_loop
+    async def before_feed_check(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _process_alert(self, session: aiohttp.ClientSession, alert: dict) -> None:
+        """Fetch an RSS feed and post new items to the configured channel."""
+        guild = self.bot.get_guild(alert["guild_id"])
+        if not guild:
+            return
+        channel = guild.get_channel(alert["channel_id"])
+        if not isinstance(channel, discord.TextChannel):
+            return
+
+        async with session.get(alert["account_id"], timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                return
+            content = await resp.text()
+
+        root = ET.fromstring(content)
+        items = root.findall(".//item")
+
+        for item in reversed(items[:10]):
+            guid_el = item.find("guid")
+            link_el = item.find("link")
+            content_id = (guid_el.text if guid_el is not None else None) or (link_el.text if link_el is not None else None)
+            if not content_id:
+                continue
+            if await self.db.check_alert_history(alert["id"], content_id):
+                continue
+
+            title_el = item.find("title")
+            pub_el = item.find("pubDate")
+            title = title_el.text if title_el is not None else "No title"
+            link = link_el.text if link_el is not None else ""
+            date = pub_el.text if pub_el is not None else ""
+
+            message = alert["message_template"].format(title=title, link=link, date=date)
+            try:
+                await channel.send(message)
+                await self.db.record_alert_history(alert["guild_id"], alert["id"], content_id)
+            except (discord.Forbidden, discord.HTTPException) as e:
+                logger.warning("Could not send alert to channel %s: %s", alert["channel_id"], e)
+
+    # ------------------------------------------------------------------
     # Social alerts command group
     # ------------------------------------------------------------------
 
