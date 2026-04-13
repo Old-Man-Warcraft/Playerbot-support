@@ -382,6 +382,41 @@ CREATE TABLE IF NOT EXISTS social_alert_history (
 );
 CREATE INDEX IF NOT EXISTS idx_social_alert_history_guild ON social_alert_history (guild_id, alert_id, content_id);
 
+-- ── Raid protection ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS raid_settings (
+    guild_id          INTEGER PRIMARY KEY,
+    enabled           INTEGER NOT NULL DEFAULT 0,
+    join_threshold    INTEGER NOT NULL DEFAULT 5,
+    join_window       INTEGER NOT NULL DEFAULT 60,
+    account_age_min   INTEGER NOT NULL DEFAULT 0,
+    lockdown_duration INTEGER NOT NULL DEFAULT 300,
+    alert_channel_id  INTEGER,
+    auto_ban          INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS raid_events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id       INTEGER NOT NULL,
+    triggered_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    join_count     INTEGER NOT NULL,
+    window_seconds INTEGER NOT NULL,
+    actions_taken  TEXT,
+    resolved_at    TEXT,
+    resolved_by    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_raid_events_guild ON raid_events (guild_id, triggered_at DESC);
+
+CREATE TABLE IF NOT EXISTS join_tracking (
+    guild_id        INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    joined_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    account_created TEXT,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_join_tracking_guild_time ON join_tracking (guild_id, joined_at DESC);
+
 -- ── MCP ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

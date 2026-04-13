@@ -158,13 +158,14 @@ def _push_embed(project: str, payload: dict, base_url: str) -> discord.Embed:
     commits = payload.get("commits") or []
     pusher = (payload.get("user_username") or payload.get("user_name") or "someone")
     project_url = payload.get("project", {}).get("web_url") or f"{base_url}/{project}"
+    author_avatar = payload.get("user_avatar")
     em = discord.Embed(
         title=f"📦 Push to `{project}` on `{branch}`",
         url=f"{project_url}/-/tree/{branch}",
         color=0xFC6D26,
         timestamp=datetime.now(timezone.utc),
     )
-    em.set_author(name=pusher)
+    em.set_author(name=pusher, url=f"{base_url}/{pusher}", icon_url=author_avatar)
     lines = []
     for c in commits[:5]:
         sha = (c.get("id") or "")[:7]
@@ -282,6 +283,7 @@ def _mr_embed(project: str, payload: dict) -> discord.Embed | None:
     icon  = icon_map.get(action, "⚪")
     user  = payload.get("user") or {}
     sender = user.get("username") or user.get("name") or ""
+    sender_avatar = user.get("avatar_url")
     em = discord.Embed(
         title=f"{icon} MR !{attrs.get('iid')} {action}: {_trunc(attrs.get('title', ''), 80)}",
         url=attrs.get("url", ""),
@@ -289,10 +291,25 @@ def _mr_embed(project: str, payload: dict) -> discord.Embed | None:
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
-    em.set_author(name=sender)
+    em.set_author(name=sender, icon_url=sender_avatar)
     source = attrs.get("source_branch", "?")
     target = attrs.get("target_branch", "?")
     em.add_field(name="Branch", value=f"`{source}` → `{target}`", inline=True)
+    diff_stats = []
+    if attrs.get("additions") is not None:
+        diff_stats.append(f"`+{attrs['additions']}`")
+    if attrs.get("deletions") is not None:
+        diff_stats.append(f"`-{attrs['deletions']}`")
+    if diff_stats:
+        em.add_field(name="Changes", value=" / ".join(diff_stats), inline=True)
+    assignees = payload.get("assignees") or []
+    if assignees:
+        names = [a.get("username") or a.get("name", "") for a in assignees[:5] if a.get("username") or a.get("name")]
+        if names:
+            em.add_field(name="Assignees", value=" ".join(f"`{n}`" for n in names), inline=True)
+    milestone = (attrs.get("milestone") or {}).get("title")
+    if milestone:
+        em.add_field(name="Milestone", value=milestone, inline=True)
     em.set_footer(text=project)
     return em
 
@@ -306,6 +323,7 @@ def _issue_embed(project: str, payload: dict) -> discord.Embed | None:
     icon_map  = {"open": "🟢", "close": "🔴", "reopen": "🟢"}
     user   = payload.get("user") or {}
     sender = user.get("username") or user.get("name") or ""
+    sender_avatar = user.get("avatar_url")
     em = discord.Embed(
         title=f"{icon_map.get(action, '⚪')} Issue #{attrs.get('iid')} {action}: {_trunc(attrs.get('title', ''), 80)}",
         url=attrs.get("url", ""),
@@ -313,11 +331,22 @@ def _issue_embed(project: str, payload: dict) -> discord.Embed | None:
         color=color_map.get(action, GITLAB_COLOR),
         timestamp=datetime.now(timezone.utc),
     )
-    em.set_author(name=sender)
+    em.set_author(name=sender, icon_url=sender_avatar)
     labels = [lbl.get("title", "") for lbl in (payload.get("labels") or [])]
     if labels:
-        em.add_field(name="Labels", value=", ".join(f"`{l}`" for l in labels[:6]), inline=False)
-    em.set_footer(text=project)
+        em.add_field(name="Labels", value=" ".join(f"`{l}`" for l in labels[:6]), inline=False)
+    assignees = payload.get("assignees") or []
+    if assignees:
+        names = [a.get("username") or a.get("name", "") for a in assignees[:5] if a.get("username") or a.get("name")]
+        if names:
+            em.add_field(name="Assignees", value=" ".join(f"`{n}`" for n in names), inline=True)
+    milestone = (attrs.get("milestone") or {}).get("title")
+    if milestone:
+        em.add_field(name="Milestone", value=milestone, inline=True)
+    footer_parts = [project]
+    if attrs.get("total_time_spent"):
+        pass  # reserved for future time tracking display
+    em.set_footer(text="  •  ".join(footer_parts))
     return em
 
 
@@ -337,6 +366,12 @@ def _release_embed(project: str, payload: dict) -> discord.Embed | None:
         timestamp=datetime.now(timezone.utc),
     )
     em.add_field(name="Tag", value=f"`{tag}`", inline=True)
+    assets = payload.get("assets") or {}
+    sources = assets.get("sources") or []
+    links = assets.get("links") or []
+    asset_count = len(links)
+    if asset_count:
+        em.add_field(name="Assets", value=str(asset_count), inline=True)
     em.set_footer(text=project)
     return em
 
@@ -615,6 +650,7 @@ class GitLabCog(commands.Cog, name="GitLab"):
             title = event.get("target_title") or ""
             author = event.get("author") or {}
             sender = author.get("username") or author.get("name") or ""
+            sender_avatar = author.get("avatar_url")
             project_url = f"{self._base_url}/{project}"
             color_map = {"opened": 0x1AAA55, "closed": 0xDD2B0E, "merged": 0x6E49CB}
             icon_map  = {"opened": "🟢", "closed": "🔴", "merged": "🟣"}
@@ -626,7 +662,7 @@ class GitLabCog(commands.Cog, name="GitLab"):
                 color=color,
                 timestamp=datetime.now(timezone.utc),
             )
-            em.set_author(name=sender)
+            em.set_author(name=sender, icon_url=sender_avatar)
             em.set_footer(text=project)
             embed = em
             event_key = "merge_request"
@@ -637,6 +673,7 @@ class GitLabCog(commands.Cog, name="GitLab"):
             title = event.get("target_title") or ""
             author = event.get("author") or {}
             sender = author.get("username") or author.get("name") or ""
+            sender_avatar = author.get("avatar_url")
             project_url = f"{self._base_url}/{project}"
             color_map = {"opened": 0x1AAA55, "closed": 0xDD2B0E}
             icon_map  = {"opened": "🟢", "closed": "🔴"}
@@ -646,7 +683,7 @@ class GitLabCog(commands.Cog, name="GitLab"):
                 color=color_map.get(action, GITLAB_COLOR),
                 timestamp=datetime.now(timezone.utc),
             )
-            em.set_author(name=sender)
+            em.set_author(name=sender, icon_url=sender_avatar)
             em.set_footer(text=project)
             embed = em
             event_key = "issues"

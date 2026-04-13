@@ -20,6 +20,7 @@ from .moderation import ModerationRepo
 from .permissions import PermissionsRepo
 from .reports import ReportsRepo
 from .support import SupportRepo
+from .raid import RaidRepo
 from .social_alerts import SocialAlertsRepo
 from .tickets import TicketsRepo
 
@@ -40,6 +41,7 @@ class Database(BaseDatabase):
     _reports: ReportsRepo
     _integrations: IntegrationsRepo
     _mcp: MCPRepo
+    _raid: RaidRepo
     _social_alerts: SocialAlertsRepo
 
     async def setup(self) -> None:
@@ -57,6 +59,7 @@ class Database(BaseDatabase):
         self._reports = ReportsRepo(c)
         self._integrations = IntegrationsRepo(c)
         self._mcp = MCPRepo(c)
+        self._raid = RaidRepo(c)
         self._social_alerts = SocialAlertsRepo(c)
 
     # ── Guild config ──────────────────────────────────────────────────
@@ -584,3 +587,29 @@ class Database(BaseDatabase):
 
     async def cleanup_alert_history(self, days=30):
         return await self._social_alerts.cleanup_alert_history(days)
+
+    # ── Raid protection ───────────────────────────────────────────────
+
+    async def get_raid_settings(self, guild_id: int):
+        return await self._raid.get_raid_settings(guild_id)
+
+    async def update_raid_settings(self, guild_id, *, enabled=None, join_threshold=None, join_window=None, account_age_min=None, lockdown_duration=None, alert_channel_id=None, auto_ban=None):
+        return await self._raid.update_raid_settings(guild_id, enabled=enabled, join_threshold=join_threshold, join_window=join_window, account_age_min=account_age_min, lockdown_duration=lockdown_duration, alert_channel_id=alert_channel_id, auto_ban=auto_ban)
+
+    async def track_join(self, guild_id, user_id, account_created=None):
+        return await self._raid.track_join(guild_id, user_id, account_created)
+
+    async def get_recent_joins(self, guild_id, seconds):
+        return await self._raid.get_recent_joins(guild_id, seconds)
+
+    async def cleanup_old_joins(self, guild_id, hours=24):
+        return await self._raid.cleanup_old_joins(guild_id, hours)
+
+    async def create_raid_event(self, guild_id, join_count, window_seconds, actions_taken):
+        return await self._raid.create_raid_event(guild_id, join_count, window_seconds, actions_taken)
+
+    async def get_raid_events(self, guild_id, limit=10):
+        return await self._raid.get_raid_events(guild_id, limit)
+
+    async def resolve_raid_event(self, guild_id, event_id, resolved_by):
+        return await self._raid.resolve_raid_event(guild_id, event_id, resolved_by)

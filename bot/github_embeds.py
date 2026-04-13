@@ -303,6 +303,9 @@ def _make_repo_embed(data: dict) -> discord.Embed:
     em.add_field(name="🐛 Open Issues", value=f"{issues:,}", inline=True)
     visibility = "Private 🔒" if data.get("private") else "Public 🌐"
     em.add_field(name="Visibility", value=visibility, inline=True)
+    default_branch = data.get("default_branch")
+    if default_branch:
+        em.add_field(name="Default Branch", value=f"`{default_branch}`", inline=True)
     topics = data.get("topics") or []
     if topics:
         em.add_field(name="Topics", value=" · ".join(f"`{t}`" for t in topics[:10]), inline=False)
@@ -395,8 +398,26 @@ def _pr_embed(repo: str, payload: dict) -> discord.Embed | None:
     base = pr.get("base", {}).get("label", "")
     head = pr.get("head", {}).get("label", "")
     em.add_field(name="Branch", value=f"`{head}` → `{base}`", inline=True)
-    em.add_field(name="Changed Files", value=str(pr.get("changed_files", "?")), inline=True)
+    changed_files = pr.get("changed_files")
+    additions = pr.get("additions")
+    deletions = pr.get("deletions")
+    diff_parts = []
+    if changed_files is not None:
+        diff_parts.append(f"{changed_files} file(s)")
+    if additions is not None and deletions is not None:
+        diff_parts.append(f"`+{additions}` / `-{deletions}`")
+    if diff_parts:
+        em.add_field(name="Changes", value="  ".join(diff_parts), inline=True)
     em.add_field(name="Commits", value=str(pr.get("commits", "?")), inline=True)
+    assignees = [a.get("login", "") for a in (pr.get("assignees") or []) if a.get("login")]
+    if assignees:
+        em.add_field(name="Assignees", value=" ".join(f"`{a}`" for a in assignees[:5]), inline=True)
+    reviewers = _requested_reviewer_names(pr)
+    if reviewers:
+        em.add_field(name="Reviewers", value=" ".join(f"`{r}`" for r in reviewers[:5]), inline=True)
+    milestone = (pr.get("milestone") or {}).get("title")
+    if milestone:
+        em.add_field(name="Milestone", value=milestone, inline=True)
     em.set_footer(text=repo)
     return em
 
@@ -420,8 +441,18 @@ def _issue_embed(repo: str, payload: dict) -> discord.Embed | None:
                   icon_url=payload.get("sender", {}).get("avatar_url"))
     labels = [lbl.get("name", "") for lbl in (issue.get("labels") or [])]
     if labels:
-        em.add_field(name="Labels", value=", ".join(f"`{l}`" for l in labels[:6]), inline=False)
-    em.set_footer(text=repo)
+        em.add_field(name="Labels", value=" ".join(f"`{l}`" for l in labels[:6]), inline=False)
+    assignees = [a.get("login", "") for a in (issue.get("assignees") or []) if a.get("login")]
+    if assignees:
+        em.add_field(name="Assignees", value=" ".join(f"`{a}`" for a in assignees[:5]), inline=True)
+    milestone = (issue.get("milestone") or {}).get("title")
+    if milestone:
+        em.add_field(name="Milestone", value=milestone, inline=True)
+    comments = issue.get("comments")
+    footer_parts = [repo]
+    if comments is not None:
+        footer_parts.append(f"{comments} comment(s)")
+    em.set_footer(text="  •  ".join(footer_parts))
     return em
 
 
@@ -442,8 +473,12 @@ def _release_embed(repo: str, payload: dict) -> discord.Embed | None:
                   icon_url=payload.get("sender", {}).get("avatar_url"))
     em.add_field(name="Tag", value=f"`{release.get('tag_name', '?')}`", inline=True)
     em.add_field(name="Pre-release", value="Yes" if release.get("prerelease") else "No", inline=True)
+    target = release.get("target_commitish")
+    if target:
+        em.add_field(name="Branch / Target", value=f"`{target}`", inline=True)
     assets = release.get("assets") or []
     if assets:
-        em.add_field(name="Assets", value=str(len(assets)), inline=True)
+        total_downloads = sum(a.get("download_count", 0) for a in assets)
+        em.add_field(name="Assets", value=f"{len(assets)} ({total_downloads:,} downloads)", inline=True)
     em.set_footer(text=repo)
     return em
