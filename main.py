@@ -34,6 +34,7 @@ from bot.cogs.custom_commands import CustomCommandsCog
 from bot.cogs.economy import EconomyCog
 from bot.cogs.reports import ReportsCog
 from bot.cogs.utility import UtilityCog
+from bot.cogs.voice_music import VoiceMusicCog
 from bot.cogs.permissions import PermissionsCog
 from bot.cogs.levels import LevelsCog
 from bot.cogs.giveaways import GiveawayCog
@@ -110,6 +111,8 @@ async def main() -> None:
                 read_message_history=True,
                 add_reactions=True,
                 use_application_commands=True,
+                connect=True,
+                speak=True,
             )
             invite_url = discord.utils.oauth_url(bot.user.id, permissions=permissions)
             logger.info("Invite URL: %s", invite_url)
@@ -132,6 +135,7 @@ async def main() -> None:
     await bot.add_cog(EconomyCog(bot, db))
     await bot.add_cog(ReportsCog(bot, db))
     await bot.add_cog(UtilityCog(bot))
+    await bot.add_cog(VoiceMusicCog(bot))
     await bot.add_cog(SupportCog(bot, db, llm, qdrant, mcp_manager))
     await bot.add_cog(MCPCog(bot, db, mcp_manager))
     await bot.add_cog(LevelsCog(bot, db))
