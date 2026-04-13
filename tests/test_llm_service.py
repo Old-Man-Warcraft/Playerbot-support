@@ -8,6 +8,7 @@ from bot.llm_service import (
     LLMService,
     _assistant_message_visible_text,
     _message_content_to_text,
+    _openai_images_api_likely_supported,
     _parse_create_embed_dict_from_serialized_tool,
     _qwen_disable_thinking_extra,
     _text_looks_like_create_embed_json,
@@ -189,6 +190,21 @@ class LLMServiceCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(extended_reasoning_model("deepseek-ai/DeepSeek-R1"))
         self.assertTrue(extended_reasoning_model("qwen3-235b-a22b-thinking-2507"))
         self.assertFalse(extended_reasoning_model("gpt-4o-mini"))
+
+    def test_openai_images_api_likely_supported_heuristic(self) -> None:
+        self.assertFalse(_openai_images_api_likely_supported("ollama/gemma4:31b-cloud"))
+        self.assertFalse(_openai_images_api_likely_supported("text-embedding-3-small"))
+        self.assertTrue(_openai_images_api_likely_supported("dall-e-3"))
+        self.assertTrue(_openai_images_api_likely_supported("gpt-image-1"))
+        self.assertTrue(_openai_images_api_likely_supported("ollama/flux:latest"))
+
+    async def test_generate_image_skips_incompatible_models_without_http(self) -> None:
+        gen = AsyncMock()
+        llm = LLMService.__new__(LLMService)
+        llm._client = SimpleNamespace(images=SimpleNamespace(generate=gen))
+        out = await llm.generate_image("a red balloon", model="ollama/gemma4:31b-cloud")
+        self.assertIsNone(out)
+        gen.assert_not_called()
 
     async def test_get_response_openai_reasoning_model_uses_completion_budget(self) -> None:
         response = SimpleNamespace(

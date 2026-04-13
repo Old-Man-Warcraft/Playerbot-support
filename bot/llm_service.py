@@ -437,6 +437,40 @@ GENERATE_IMAGE_TOOL: dict[str, Any] = {
 _ALLOWED_IMAGE_SIZES = frozenset({"1024x1024", "1792x1024", "1024x1792"})
 
 
+def _openai_images_api_likely_supported(model: str) -> bool:
+    """Return False for models that cannot satisfy ``client.images.generate`` (chat / vision LLMs)."""
+    m = (model or "").strip().lower()
+    if not m:
+        return False
+    image_hints = (
+        "dall-e",
+        "dall_e",
+        "gpt-image",
+        "flux",
+        "stable-diffusion",
+        "stable_diffusion",
+        "sdxl",
+        "z-image",
+        "z_image",
+        "midjourney",
+        "imagen",
+        "kandinsky",
+        "text-to-image",
+        "image-gen",
+        "image_gen",
+    )
+    if any(h in m for h in image_hints):
+        return True
+    if "gemma" in m or "embedding" in m or "text-embedding" in m:
+        return False
+    if m.startswith("ollama/"):
+        tail = m.split("/", 1)[-1]
+        if any(h in tail for h in image_hints):
+            return True
+        return False
+    return True
+
+
 def _execute_builtin_tool(name: str, arguments: dict[str, Any]) -> str:
     """Execute a built-in tool and return a string result."""
     if name == "get_time":
@@ -1004,6 +1038,15 @@ class LLMService:
         style: str = "vivid",
     ) -> str | None:
         """Generate an image and return its URL, or None on failure."""
+        if not _openai_images_api_likely_supported(model):
+            logger.error(
+                "Skipping images.generate: model %r is not an OpenAI-style image model. "
+                "Models like Gemma/Llama/Qwen are chat or vision-input only; set "
+                "**assistant_image_model** to dall-e-3, gpt-image-1, or another model your "
+                "LiteLLM proxy exposes on ``POST /v1/images/generations`` (e.g. a Flux / SD route).",
+                model,
+            )
+            return None
         try:
             response = await self._client.images.generate(
                 model=model,
@@ -1016,7 +1059,8 @@ class LLMService:
             data = getattr(response, "data", None) or []
             if not data:
                 logger.error(
-                    "Image generation returned empty data (model=%r, response_type=%s)",
+                    "Image generation returned empty data (model=%r, response_type=%s). "
+                    "Confirm this deployment supports OpenAI ``images.generate`` on your proxy.",
                     model,
                     type(response).__name__,
                 )
