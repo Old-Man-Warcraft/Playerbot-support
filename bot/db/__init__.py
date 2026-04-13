@@ -21,6 +21,7 @@ from .permissions import PermissionsRepo
 from .reports import ReportsRepo
 from .support import SupportRepo
 from .raid import RaidRepo
+from .reaction_roles import ReactionRolesRepo
 from .social_alerts import SocialAlertsRepo
 from .tickets import TicketsRepo
 
@@ -42,6 +43,7 @@ class Database(BaseDatabase):
     _integrations: IntegrationsRepo
     _mcp: MCPRepo
     _raid: RaidRepo
+    _reaction_roles: ReactionRolesRepo
     _social_alerts: SocialAlertsRepo
 
     async def setup(self) -> None:
@@ -60,6 +62,7 @@ class Database(BaseDatabase):
         self._integrations = IntegrationsRepo(c)
         self._mcp = MCPRepo(c)
         self._raid = RaidRepo(c)
+        self._reaction_roles = ReactionRolesRepo(c)
         self._social_alerts = SocialAlertsRepo(c)
 
     # ── Guild config ──────────────────────────────────────────────────
@@ -561,6 +564,23 @@ class Database(BaseDatabase):
 
     async def update_mcp_server(self, guild_id, name, *, transport=None, command=None, args=None, env=None, url=None):
         return await self._mcp.update_mcp_server(guild_id, name, transport=transport, command=command, args=args, env=env, url=url)
+
+    # ── Reaction roles ────────────────────────────────────────────────
+
+    async def add_reaction_role(self, guild_id, message_id, channel_id, emoji, role_id, unique_role=False):
+        return await self._reaction_roles.add_reaction_role(guild_id, message_id, channel_id, emoji, role_id, unique_role)
+
+    async def get_reaction_role(self, guild_id, message_id, emoji):
+        return await self._reaction_roles.get_reaction_role(guild_id, message_id, emoji)
+
+    async def get_reaction_roles(self, guild_id, message_id=None):
+        return await self._reaction_roles.get_reaction_roles(guild_id, message_id)
+
+    async def remove_reaction_role(self, guild_id, message_id, emoji):
+        return await self._reaction_roles.remove_reaction_role(guild_id, message_id, emoji)
+
+    async def remove_all_reaction_roles(self, guild_id, message_id):
+        return await self._reaction_roles.remove_all_reaction_roles(guild_id, message_id)
 
     # ── Social alerts ─────────────────────────────────────────────────
 
