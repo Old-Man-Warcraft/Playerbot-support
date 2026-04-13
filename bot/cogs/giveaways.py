@@ -21,9 +21,12 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+import aiosqlite
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+
+from bot.db.base import DB_PATH
 
 if TYPE_CHECKING:
     from bot.db import Database
@@ -142,8 +145,10 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
     @tasks.loop(seconds=30)
     async def _giveaway_loop(self) -> None:
         now = datetime.now(timezone.utc)
-        await self.db.conn.commit()
-        rows = await self.db.get_active_giveaways()
+        async with aiosqlite.connect(DB_PATH) as _db:
+            _db.row_factory = aiosqlite.Row
+            cur = await _db.execute("SELECT * FROM giveaways WHERE status = 'active'")
+            rows = await cur.fetchall()
         for row in rows:
             try:
                 end_time = datetime.fromisoformat(row["end_time"])
