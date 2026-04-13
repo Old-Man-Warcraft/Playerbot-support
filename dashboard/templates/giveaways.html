@@ -164,7 +164,7 @@
               <td class="px-4 py-3 text-gray-200 font-medium max-w-[180px] truncate" title="{{ g.prize }}">{{ g.prize }}</td>
               <td class="px-4 py-3 text-gray-400 text-center">{{ g.winner_count }}</td>
               <td class="px-4 py-3 text-gray-400 text-center">{{ entry_counts.get(g.id, 0) }}</td>
-              <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ g.end_time[:16] if g.end_time else "—" }}</td>
+              <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ g.end_time[:16] if g.end_time else "—" }} <span class="text-gray-600">UTC</span></td>
               <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ g.channel_id }}</td>
               {% if guild_id %}
               <td class="px-4 py-3">
