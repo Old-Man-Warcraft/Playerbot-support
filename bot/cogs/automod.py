@@ -61,6 +61,7 @@ class AutoModCog(commands.Cog, name="AutoMod"):
     # ------------------------------------------------------------------
 
     filter_group = app_commands.Group(name="filter", description="Manage auto-mod filters")
+    automodset_group = app_commands.Group(name="automodset", description="Auto-mod settings (admin)")
 
     @filter_group.command(name="add_word", description="Add a word to the filter list")
     @app_commands.describe(word="The word or phrase to block")
@@ -248,8 +249,6 @@ class AutoModCog(commands.Cog, name="AutoMod"):
     # ------------------------------------------------------------------
     # /automodset  –  admin commands to configure automod per-guild
     # ------------------------------------------------------------------
-
-    automodset_group = app_commands.Group(name="automodset", description="Auto-mod settings (admin)")
 
     @automodset_group.command(name="spam_threshold", description="Set messages count that triggers spam detection")
     @app_commands.describe(count="Number of messages within the interval to flag as spam")
