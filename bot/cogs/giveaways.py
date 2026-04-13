@@ -125,6 +125,8 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
             giveaway_id = int(custom_id.split(":")[2])
         except (IndexError, ValueError):
             return
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         await self.handle_entry(interaction, giveaway_id)
 
     async def cog_unload(self) -> None:
@@ -154,9 +156,8 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
     # ------------------------------------------------------------------
 
     async def handle_entry(self, interaction: discord.Interaction, giveaway_id: int) -> None:
-        if interaction.response.is_done():
-            return
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
         row = await self.db.get_giveaway(giveaway_id)
         if not row or row["status"] != "active":
