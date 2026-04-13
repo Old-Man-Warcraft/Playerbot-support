@@ -320,43 +320,43 @@ def init(templates: Jinja2Templates) -> APIRouter:
                 )
                 await _db.commit()
                 giveaway_id = cur.lastrowid
-        except Exception as exc:
-            logger.exception("Failed to insert giveaway: %s", exc)
-            request.session["flash_error"] = f"Database error: {exc}"
-            return RedirectResponse(f"/giveaways?guild_id={guild_id}&status=active", status_code=302)
 
-        embed = _giveaway_embed_payload(
-            giveaway_id=giveaway_id,
-            prize=prize,
-            end_time=end_dt,
-            winner_count=winner_count,
-            host_id=host_id,
-        )
-        components = [
-            {
-                "type": 1,
-                "components": [
+                embed = _giveaway_embed_payload(
+                    giveaway_id=giveaway_id,
+                    prize=prize,
+                    end_time=end_dt,
+                    winner_count=winner_count,
+                    host_id=host_id,
+                )
+                components = [
                     {
-                        "type": 2,
-                        "style": 3,
-                        "label": "🎉 Enter",
-                        "custom_id": f"giveaway:enter:{giveaway_id}",
+                        "type": 1,
+                        "components": [
+                            {
+                                "type": 2,
+                                "style": 3,
+                                "label": "🎉 Enter",
+                                "custom_id": f"giveaway:enter:{giveaway_id}",
+                            }
+                        ],
                     }
-                ],
-            }
-        ]
-        msg = await _discord_post_message(channel_id, embed, components)
-        if msg:
-            await db_execute(
-                "UPDATE giveaways SET message_id = ? WHERE id = ?",
-                (int(msg["id"]), giveaway_id),
-            )
-            request.session["flash_ok"] = f"Giveaway #{giveaway_id} launched in Discord!"
-        else:
-            request.session["flash_error"] = (
-                f"Giveaway #{giveaway_id} saved to DB but could not post to Discord "
-                f"(check DISCORD_BOT_TOKEN and that the bot has access to channel {channel_id})."
-            )
+                ]
+                msg = await _discord_post_message(channel_id, embed, components)
+                if msg:
+                    await _db.execute(
+                        "UPDATE giveaways SET message_id = ? WHERE id = ?",
+                        (int(msg["id"]), giveaway_id),
+                    )
+                    await _db.commit()
+                    request.session["flash_ok"] = f"Giveaway #{giveaway_id} launched in Discord!"
+                else:
+                    request.session["flash_error"] = (
+                        f"Giveaway #{giveaway_id} saved but could not post to Discord "
+                        f"(check DISCORD_BOT_TOKEN and bot access to channel {channel_id})."
+                    )
+        except Exception as exc:
+            logger.exception("Failed to create giveaway: %s", exc)
+            request.session["flash_error"] = f"Error: {exc}"
 
         return RedirectResponse(f"/giveaways?guild_id={guild_id}&status=active", status_code=302)
 

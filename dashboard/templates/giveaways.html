@@ -78,8 +78,22 @@
 
         <div class="field-stack">
           <label class="text-xs text-gray-400">Duration <span class="text-red-400">*</span></label>
-          <input type="text" name="duration" required placeholder="e.g. 1d, 2h30m, 30m" class="input" pattern="(\d+\s*[dhms])+.*"/>
-          <span class="helper-text">Format: <code class="text-xs text-[#8fa8ff]">1d</code>, <code class="text-xs text-[#8fa8ff]">2h30m</code>, <code class="text-xs text-[#8fa8ff]">45s</code></span>
+          <select id="durationSelect" class="input" onchange="onDurationChange(this)">
+            <option value="15m">15 minutes</option>
+            <option value="30m">30 minutes</option>
+            <option value="1h">1 hour</option>
+            <option value="2h">2 hours</option>
+            <option value="6h">6 hours</option>
+            <option value="12h">12 hours</option>
+            <option value="1d" selected>1 day</option>
+            <option value="2d">2 days</option>
+            <option value="3d">3 days</option>
+            <option value="7d">7 days</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <input type="text" name="duration" id="durationInput" value="1d" required class="input hidden"
+                 placeholder="e.g. 1d, 2h30m, 45m"/>
+          <span id="durationCustomHint" class="helper-text hidden">Format: <code class="text-xs text-[#8fa8ff]">1d</code>, <code class="text-xs text-[#8fa8ff]">2h30m</code>, <code class="text-xs text-[#8fa8ff]">45m</code></span>
         </div>
 
         <div class="field-stack">
@@ -201,9 +215,23 @@
 </div>
 
 <script>
+function onDurationChange(sel) {
+  const input = document.getElementById('durationInput');
+  const hint  = document.getElementById('durationCustomHint');
+  if (sel.value === 'custom') {
+    input.classList.remove('hidden');
+    hint.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+  } else {
+    input.classList.add('hidden');
+    hint.classList.add('hidden');
+    input.value = sel.value;
+  }
+}
+
 async function loadChannels(guildId) {
   const select = document.getElementById('channelSelect');
-  const input  = document.getElementById('channelInput');
   select.innerHTML = '<option value="">Loading…</option>';
   select.classList.remove('hidden');
   try {
