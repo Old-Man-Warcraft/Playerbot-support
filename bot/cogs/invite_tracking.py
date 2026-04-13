@@ -39,6 +39,26 @@ class InviteTrackingCog(commands.Cog, name="Invite Tracking"):
         self.update_invites_task.cancel()
 
     # ------------------------------------------------------------------
+    # Background task: refresh invite cache every 10 minutes
+    # ------------------------------------------------------------------
+
+    @tasks.loop(minutes=10)
+    async def update_invites_task(self) -> None:
+        """Periodically refresh the invite cache for all guilds."""
+        for guild in self.bot.guilds:
+            if not guild.me.guild_permissions.manage_guild:
+                continue
+            try:
+                invites = await guild.invites()
+                self._invite_cache[guild.id] = {inv.code: inv for inv in invites}
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    @update_invites_task.before_loop
+    async def before_update_invites(self) -> None:
+        await self.bot.wait_until_ready()
+
+    # ------------------------------------------------------------------
     # Invite tracking command group
     # ------------------------------------------------------------------
 
