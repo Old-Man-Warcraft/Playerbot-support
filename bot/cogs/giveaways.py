@@ -156,22 +156,24 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
     async def handle_entry(self, interaction: discord.Interaction, giveaway_id: int) -> None:
         if interaction.response.is_done():
             return
+        await interaction.response.defer(ephemeral=True)
+
         row = await self.db.get_giveaway(giveaway_id)
         if not row or row["status"] != "active":
-            await interaction.response.send_message("❌ This giveaway has ended.", ephemeral=True)
+            await interaction.followup.send("❌ This giveaway has ended.", ephemeral=True)
             return
 
         entered = await self.db.enter_giveaway(giveaway_id, interaction.user.id)
         count = await self.db.get_giveaway_entry_count(giveaway_id)
 
         if entered:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"✅ You entered the giveaway! **{count}** total entries.", ephemeral=True
             )
         else:
-            left = await self.db.leave_giveaway(giveaway_id, interaction.user.id)
+            await self.db.leave_giveaway(giveaway_id, interaction.user.id)
             count = await self.db.get_giveaway_entry_count(giveaway_id)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"↩️ You withdrew your entry. **{count}** total entries.", ephemeral=True
             )
 
