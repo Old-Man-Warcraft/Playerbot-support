@@ -161,6 +161,9 @@ def init(templates: Jinja2Templates) -> APIRouter:
             "ON CONFLICT(guild_id, command, target_type, target_id) DO UPDATE SET allowed = excluded.allowed",
             (guild_id, command.strip().lstrip("/"), target_type, target_id, allowed),
         )
+        wants_json = "application/json" in request.headers.get("accept", "")
+        if wants_json:
+            return JSONResponse({"ok": True, "allowed": allowed})
         return RedirectResponse(f"/permissions?guild_id={guild_id}", status_code=302)
 
     @router.post("/permissions/delete")

@@ -165,28 +165,32 @@
           </div>
           {% endif %}
           <!-- Inline add-role form -->
-          <div class="add-role-form" id="arf-{{ cmd.name | replace(' ', '_') }}">
-            <select class="input role-select text-sm" id="role-sel-{{ cmd.name | replace(' ', '_') }}">
+          {% set ck = cmd.name | replace(' ', '_') %}
+          <div class="add-role-form" id="arf-{{ ck }}">
+            <select class="input role-select text-sm" id="role-sel-{{ ck }}">
               <option value="">— select role —</option>
             </select>
-            <label class="perm-switch mx-1" id="arf-sw-{{ cmd.name | replace(' ', '_') }}" title="Allow / Deny">
-              <input type="checkbox" id="arf-cb-{{ cmd.name | replace(' ', '_') }}">
+            <label class="perm-switch mx-1" id="arf-sw-{{ ck }}" title="Allow / Deny">
+              <input type="checkbox" id="arf-cb-{{ ck }}">
               <span class="perm-track"><span class="perm-thumb"></span></span>
             </label>
-            <span class="allow-label allow-deny text-xs" id="arf-lbl-{{ cmd.name | replace(' ', '_') }}">Deny</span>
+            <span class="allow-label allow-deny text-xs" id="arf-lbl-{{ ck }}">Deny</span>
             <button class="btn-success text-xs" style="padding:.28rem .65rem;"
-                    onclick="saveRoleOverride('{{ cmd.name }}', '{{ cmd.name | replace(' ', '_') }}', {{ guild_id }})">
+                    data-cmd="{{ cmd.name }}" data-key="{{ ck }}" data-guild="{{ guild_id }}"
+                    onclick="saveRoleOverride(this.dataset.cmd, this.dataset.key, this.dataset.guild)">
               <i class="fa fa-check"></i> Add
             </button>
             <button class="btn-secondary text-xs" style="padding:.28rem .65rem;"
-                    onclick="closeArf('{{ cmd.name | replace(' ', '_') }}')">
+                    data-key="{{ ck }}"
+                    onclick="closeArf(this.dataset.key)">
               Cancel
             </button>
           </div>
         </div>
         <!-- Right: Add role button -->
         <button class="btn-secondary text-xs flex-shrink-0 mt-1"
-                onclick="openArf('{{ cmd.name | replace(' ', '_') }}')">
+                data-key="{{ ck }}"
+                onclick="openArf(this.dataset.key)">
           <i class="fa fa-plus text-[0.65rem]"></i> Role
         </button>
       </div>
@@ -259,23 +263,28 @@ document.querySelectorAll('.add-role-form').forEach(form => {
   });
 });
 
-/* ── Save a new role override via form POST (no page reload needed — we reload) ── */
+/* ── Save a new role override via AJAX ── */
 async function saveRoleOverride(cmdName, key, guildId) {
-  const sel = document.getElementById('role-sel-' + key);
-  const cb  = document.getElementById('arf-cb-'  + key);
+  const sel    = document.getElementById('role-sel-' + key);
+  const cb     = document.getElementById('arf-cb-'   + key);
   const roleId = sel && sel.value;
   if (!roleId) { showToast('Select a role first', 'warning'); return; }
-  const allowed = cb && cb.checked ? 1 : 0;
+  const allowed  = cb && cb.checked ? 1 : 0;
+  const roleName = sel.options[sel.selectedIndex]?.text || roleId;
   const body = new URLSearchParams({
     guild_id: guildId, command: cmdName,
     target_type: 'role', target_id: roleId, allowed,
   });
   try {
-    const res = await fetch('/permissions/save', { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-    if (res.redirected || res.ok) {
-      showToast(`Override saved for /${cmdName}`, 'success');
-      setTimeout(() => location.reload(), 600);
-    }
+    const res  = await fetch('/permissions/save', {
+      method: 'POST', body,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error();
+    showToast(`Override saved for /${cmdName}`, 'success');
+    /* Reload so the new chip appears with its DB id (needed for toggle/delete) */
+    setTimeout(() => location.reload(), 500);
   } catch(e) {
     showToast('Failed to save override', 'error');
   }
