@@ -321,8 +321,8 @@ def init(templates: Jinja2Templates) -> APIRouter:
                     guild_id, channel_id, prize, start_dt.isoformat(), end_dt.isoformat(), winner_count, host_id
                 )
                 cur = await _db.execute(
-                    "INSERT INTO giveaways (guild_id, channel_id, prize, start_time, end_time, winner_count, host_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO giveaways (guild_id, channel_id, prize, start_time, end_time, winner_count, host_id, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
                     (guild_id, channel_id, prize, start_dt.isoformat(), end_dt.isoformat(), winner_count, host_id),
                 )
                 await _db.commit()

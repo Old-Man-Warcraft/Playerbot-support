@@ -168,4 +168,9 @@ class BaseDatabase:
                 )
                 logger.info("Migration: added %s to giveaways", col)
 
+        # Fix any existing NULL status rows (from start_time migration)
+        cur = await self._db.execute("UPDATE giveaways SET status = 'active' WHERE status IS NULL")  # type: ignore[union-attr]
+        if cur.rowcount > 0:
+            logger.info("Migration: fixed %d giveaways with NULL status to 'active'", cur.rowcount)
+
         await self._db.commit()  # type: ignore[union-attr]
