@@ -51,9 +51,11 @@ from bot.github_client import (
     _DEFAULT_EVENTS,
 )
 from bot.github_embeds import (
+    ZERO_GIT_SHA,
     _REPO_RE,
     _ts,
     _trunc,
+    normalize_rest_commit_for_push,
     _parse_iso_dt,
     _requested_reviewer_names,
     _summarize_reviews,
@@ -576,6 +578,51 @@ class GitHubCog(commands.Cog, name="GitHub"):
             except Exception as exc:
                 logger.debug("GitHub: failed to embed commit %s: %s", sha[:7], exc)
 
+    async def _enrich_push_payload(self, repo: str, payload: dict) -> dict:
+        """Fill ``commits`` / ``head_commit`` when the Events API omits them.
+
+        ``GET /repos/.../events`` PushEvent payloads often ship with ``commits: []``
+        (no messages or SHAs beyond ``head``/``before``/``after``). The compare and
+        commits endpoints return full metadata for the same push.
+        """
+        if payload.get("commits"):
+            return payload
+        after = (payload.get("after") or "").strip()
+        before = (payload.get("before") or "").strip()
+        head_sha = (payload.get("head") or after).strip()
+        if not after and not head_sha:
+            return payload
+
+        commits: list[dict] = []
+        if before and before != ZERO_GIT_SHA and before != after:
+            status, data, _ = await self.gh.get(f"/repos/{repo}/compare/{before}...{after}")
+            if status == 200 and isinstance(data, dict):
+                for raw in data.get("commits") or []:
+                    commits.append(normalize_rest_commit_for_push(raw))
+
+        size = int(payload.get("size") or payload.get("distinct_size") or 0)
+        if not commits and size > 1 and after:
+            cap = min(size, 30)
+            status, data, _ = await self.gh.get(f"/repos/{repo}/commits?sha={after}&per_page={cap}")
+            if status == 200 and isinstance(data, list) and data:
+                commits = [normalize_rest_commit_for_push(c) for c in reversed(data)]
+
+        if not commits:
+            tip = head_sha or after
+            if tip:
+                status, data, _ = await self.gh.get(f"/repos/{repo}/commits/{tip}")
+                if status == 200 and isinstance(data, dict):
+                    commits = [normalize_rest_commit_for_push(data)]
+
+        if not commits:
+            return payload
+
+        merged = dict(payload)
+        merged["commits"] = commits
+        if not merged.get("head_commit"):
+            merged["head_commit"] = commits[-1]
+        return merged
+
     async def _dispatch_event(self, repo: str, event: dict, subscribers: list) -> None:
         event_type = event.get("type", "")
         payload = event.get("payload") or {}
@@ -583,9 +630,10 @@ class GitHubCog(commands.Cog, name="GitHub"):
         embed: discord.Embed | None = None
 
         if event_type == "PushEvent":
+            payload = await self._enrich_push_payload(repo, payload)
             embed = _push_embed(repo, payload, actor=event.get("actor"))
             event_key = "push"
-            
+
             # Generate embeddings for commit details
             commits = payload.get("commits") or []
             if commits:

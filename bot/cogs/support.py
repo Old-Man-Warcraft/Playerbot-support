@@ -2052,7 +2052,8 @@ class SupportCog(commands.Cog, name="Support"):
             name="🎫 Tickets",
             value=(
                 "Click **Open Ticket** on a ticket panel.\n"
-                "**/ticket_panel** · **/ticket_category** · **/ticket_close**"
+                "**/ticket panel** · **/ticket category** · **/ticket close**\n"
+                "Configure tickets and post a panel from the dashboard **Tickets** page."
             ),
             inline=False,
         )

@@ -344,6 +344,48 @@ def _make_user_embed(data: dict) -> discord.Embed:
 # Discord embed builders — event notification embeds (polling)
 # ---------------------------------------------------------------------------
 
+ZERO_GIT_SHA = "0" * 40
+
+
+def normalize_rest_commit_for_push(api_commit: dict) -> dict:
+    """Map a REST ``commit`` object (compare or /commits) to webhook-style fields.
+
+    GitHub's repository Events feed omits ``payload.commits`` on PushEvent; the
+    compare/commits APIs return a different shape. :func:`_push_embed` and
+    :func:`_fmt_commit_line` expect webhook-style dicts.
+    """
+    sha = api_commit.get("sha") or ""
+    inner = api_commit.get("commit") or {}
+    message = inner.get("message") or ""
+    author = inner.get("author") or {}
+    committer = inner.get("committer") or {}
+    user = api_commit.get("author")
+    author_out = {
+        "name": author.get("name"),
+        "email": author.get("email"),
+        "date": author.get("date"),
+    }
+    if isinstance(user, dict) and user.get("login"):
+        author_out["login"] = user["login"]
+    html_url = api_commit.get("html_url") or ""
+    api_url = api_commit.get("url") or ""
+    url = html_url if html_url.startswith("https://github.com") else api_url
+    return {
+        "id": sha,
+        "sha": sha,
+        "message": message,
+        "url": url,
+        "author": author_out,
+        "committer": {
+            "name": committer.get("name"),
+            "email": committer.get("email"),
+            "date": committer.get("date"),
+        },
+        "added": [],
+        "removed": [],
+        "modified": [],
+    }
+
 
 def _fmt_commit_line(c: dict, repo_url: str) -> str:
     """Format a single commit as a hyperlinked line with author and optional file stats."""

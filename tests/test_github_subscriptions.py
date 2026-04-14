@@ -19,6 +19,7 @@ from bot.cogs.github import (
     _summarize_reviews,
 )
 from bot.db import Database
+from bot.github_embeds import normalize_rest_commit_for_push
 
 
 class GitHubPollerBootstrapTests(unittest.IsolatedAsyncioTestCase):
@@ -248,6 +249,61 @@ class GitHubReviewHelperTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertIn("`docs`  •  2 pending", lines[0])
         self.assertIn("`platform`  •  1 pending", lines[1])
+
+
+class GitHubPushEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    def test_normalize_rest_commit_maps_compare_entry(self) -> None:
+        raw = {
+            "sha": "abc123def456",
+            "html_url": "https://github.com/o/r/commit/abc123def456",
+            "commit": {
+                "message": "fix: thing\n\nbody",
+                "author": {"name": "Pat", "email": "p@example.com", "date": "2026-01-01T00:00:00Z"},
+                "committer": {"name": "Pat", "email": "p@example.com"},
+            },
+            "author": {"login": "patlee"},
+        }
+        out = normalize_rest_commit_for_push(raw)
+        self.assertEqual(out["id"], raw["sha"])
+        self.assertEqual(out["message"], raw["commit"]["message"])
+        self.assertEqual(out["author"]["login"], "patlee")
+        self.assertTrue(str(out["url"]).startswith("https://github.com"))
+
+    async def test_enrich_push_payload_fetches_compare_when_events_payload_empty_commits(self) -> None:
+        cog = GitHubCog(bot=MagicMock(), db=MagicMock(), config=SimpleNamespace(github_token="t"))
+        compare_commit = {
+            "sha": "111",
+            "html_url": "https://github.com/o/r/commit/111",
+            "commit": {"message": "one", "author": {"name": "A"}},
+            "author": {"login": "a"},
+        }
+        cog.gh.get = AsyncMock(
+            return_value=(
+                200,
+                {"commits": [compare_commit]},
+                {},
+            )
+        )
+        payload = {
+            "before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "commits": [],
+            "ref": "refs/heads/main",
+        }
+        out = await cog._enrich_push_payload("o/r", payload)
+        cog.gh.get.assert_awaited_once()
+        self.assertEqual(len(out["commits"]), 1)
+        self.assertEqual(out["commits"][0]["message"], "one")
+        self.assertEqual(out["head_commit"]["sha"], "111")
+
+    async def test_enrich_push_payload_skips_api_when_commits_present(self) -> None:
+        cog = GitHubCog(bot=MagicMock(), db=MagicMock(), config=SimpleNamespace(github_token=None))
+        cog.gh.get = AsyncMock()
+        payload = {"commits": [{"id": "x", "message": "m"}], "before": "a", "after": "b"}
+        out = await cog._enrich_push_payload("o/r", payload)
+        cog.gh.get.assert_not_awaited()
+        self.assertEqual(out["commits"][0]["message"], "m")
 
 
 class GitHubTemplateAssigneeTests(unittest.IsolatedAsyncioTestCase):

@@ -21,11 +21,28 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.ticket_panel import resolve_ticket_panel_copy
+
 if TYPE_CHECKING:
     from bot.db import Database
     from bot.cogs.mod_logging import ModLoggingCog
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_csv_int_ids(raw: str | None) -> list[int]:
+    if not raw or not str(raw).strip():
+        return []
+    out: list[int] = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part))
+        except ValueError:
+            continue
+    return out
 
 
 # ======================================================================
@@ -133,19 +150,22 @@ class TicketsCog(commands.Cog, name="Tickets"):
 
     ticket_group = app_commands.Group(name="ticket", description="Ticket system management")
 
+    async def _guild_panel_embed(self, guild_id: int) -> discord.Embed:
+        cfg = {
+            "ticket_panel_title": await self.db.get_guild_config(guild_id, "ticket_panel_title"),
+            "ticket_panel_description": await self.db.get_guild_config(guild_id, "ticket_panel_description"),
+            "ticket_panel_footer": await self.db.get_guild_config(guild_id, "ticket_panel_footer"),
+        }
+        title, description, footer = resolve_ticket_panel_copy(cfg)
+        embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
+        embed.set_footer(text=footer)
+        return embed
+
     @ticket_group.command(name="panel", description="Post a ticket panel with an Open Ticket button")
     @app_commands.describe(channel="Channel to post the panel in")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def ticket_panel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
-        embed = discord.Embed(
-            title="🎫 Support Tickets",
-            description=(
-                "Need help?  Click the button below to open a private support ticket.\n\n"
-                "A staff member will be with you shortly."
-            ),
-            color=discord.Color.blurple(),
-        )
-        embed.set_footer(text="One open ticket per user at a time.")
+        embed = await self._guild_panel_embed(interaction.guild_id)  # type: ignore[arg-type]
         await channel.send(embed=embed, view=TicketPanelView(self))
         await interaction.response.send_message(f"✅ Ticket panel posted in {channel.mention}.", ephemeral=True)
 
@@ -193,10 +213,20 @@ class TicketsCog(commands.Cog, name="Tickets"):
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
         }
-        # Grant access to roles with manage_messages (staff)
-        for role in guild.roles:
-            if role.permissions.manage_messages and not role.is_default():
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        staff_raw = await self.db.get_guild_config(guild.id, "ticket_staff_roles")
+        staff_ids = _parse_csv_int_ids(staff_raw)
+        if staff_ids:
+            for rid in staff_ids:
+                role = guild.get_role(rid)
+                if role and not role.is_default():
+                    overwrites[role] = discord.PermissionOverwrite(
+                        read_messages=True, send_messages=True, attach_files=True
+                    )
+        else:
+            # Grant access to roles with manage_messages (staff) when no explicit list is set
+            for role in guild.roles:
+                if role.permissions.manage_messages and not role.is_default():
+                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
         channel_name = f"ticket-{user.name[:16]}-{user.discriminator or user.id}"
         channel = await guild.create_text_channel(

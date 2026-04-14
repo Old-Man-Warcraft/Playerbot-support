@@ -232,6 +232,30 @@ BASE_CONFIG_SCHEMA: dict[str, dict[str, Any]] = {
         "description": "Category where support tickets are created.",
         "placeholder": "123456789012345678",
     },
+    "ticket_staff_roles": {
+        "type": "textarea",
+        "label": "Ticket Staff Role IDs",
+        "description": "Comma-separated role IDs that can see ticket channels. If empty, roles with Manage Messages are used.",
+        "placeholder": "123456789012345678, 987654321098765432",
+    },
+    "ticket_panel_title": {
+        "type": "text",
+        "label": "Ticket Panel Title",
+        "description": "Title on the Open Ticket panel embed (dashboard or /ticket panel).",
+        "placeholder": "Support Tickets",
+    },
+    "ticket_panel_description": {
+        "type": "textarea",
+        "label": "Ticket Panel Description",
+        "description": "Body text on the ticket panel embed.",
+        "placeholder": "Need help? Click the button below…",
+    },
+    "ticket_panel_footer": {
+        "type": "text",
+        "label": "Ticket Panel Footer",
+        "description": "Small footer line on the ticket panel embed.",
+        "placeholder": "One open ticket per user at a time.",
+    },
     "reports_channel": {
         "type": "text",
         "label": "Reports Channel ID",
@@ -420,6 +444,10 @@ CONFIG_CATEGORIES: dict[str, list[str]] = {
         "autorole",
         "verified_role",
         "ticket_category",
+        "ticket_staff_roles",
+        "ticket_panel_title",
+        "ticket_panel_description",
+        "ticket_panel_footer",
         "reports_channel",
     ],
     "Economy": [

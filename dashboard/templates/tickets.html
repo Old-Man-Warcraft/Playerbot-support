@@ -44,7 +44,82 @@
   </div>
 
   <!-- Tickets table -->
-  <div class="flex-1 min-w-0">
+  <div class="flex-1 min-w-0 space-y-6">
+    {% if guild_id %}
+    {% if ticket_saved %}
+    <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+      Ticket settings saved. They apply immediately for new tickets and the next panel you post.
+    </div>
+    {% endif %}
+    {% if panel_ok %}
+    <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+      Ticket panel message posted to Discord. The Open Ticket button uses the same layout as <code class="text-xs">/ticket panel</code>.
+    </div>
+    {% endif %}
+    {% if panel_err %}
+    <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+      {{ panel_err }}
+    </div>
+    {% endif %}
+
+    <div class="card p-5">
+      <h2 class="font-semibold text-white mb-1">Ticket setup</h2>
+      <p class="text-xs text-gray-500 mb-4">
+        Configure where tickets open, who can see them, and how the panel reads. You can also post the panel from here (requires <span class="font-mono">DISCORD_BOT_TOKEN</span> in the dashboard environment).
+        The same keys are available under <a href="/config?guild_id={{ guild_id }}" class="text-[#5865F2] hover:underline">Guild config</a> → Welcome &amp; Tickets.
+      </p>
+      <form method="post" action="/tickets/setup" class="space-y-4">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Ticket category ID</label>
+          <input type="text" name="ticket_category" class="input w-full font-mono text-sm"
+                 value="{{ ticket_config.get('ticket_category', '') }}"
+                 placeholder="Category where new ticket channels are created"/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Staff role IDs (comma-separated)</label>
+          <textarea name="ticket_staff_roles" class="input w-full font-mono text-sm" rows="2"
+                    placeholder="Leave empty to use every role with Manage Messages">{{ ticket_config.get('ticket_staff_roles', '') }}</textarea>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Panel title (optional)</label>
+          <input type="text" name="ticket_panel_title" class="input w-full text-sm"
+                 value="{{ ticket_config.get('ticket_panel_title', '') }}" maxlength="256"
+                 placeholder="Default: Support Tickets"/>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Panel description (optional)</label>
+          <textarea name="ticket_panel_description" class="input w-full text-sm" rows="4"
+                    placeholder="Shown under the title on the panel embed">{{ ticket_config.get('ticket_panel_description', '') }}</textarea>
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 mb-1 block">Panel footer (optional)</label>
+          <input type="text" name="ticket_panel_footer" class="input w-full text-sm"
+                 value="{{ ticket_config.get('ticket_panel_footer', '') }}" maxlength="2048"
+                 placeholder="Default: one open ticket per user"/>
+        </div>
+        <button type="submit" class="btn-primary"><i class="fa fa-save"></i> Save ticket settings</button>
+      </form>
+
+      <hr class="border-gray-800 my-6"/>
+
+      <h3 class="text-sm font-semibold text-gray-300 mb-2">Post ticket panel</h3>
+      {% if not bot_token_configured %}
+      <p class="text-xs text-amber-200/90 mb-3">Bot token is not configured in this process; use <code class="text-xs">/ticket panel</code> in Discord instead.</p>
+      {% endif %}
+      <form method="post" action="/tickets/post-panel" class="flex flex-col sm:flex-row gap-3 sm:items-end">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div class="flex-1 min-w-0">
+          <label class="text-xs text-gray-500 mb-1 block">Channel ID</label>
+          <input type="text" name="channel_id" class="input w-full font-mono text-sm" placeholder="Text or announcement channel ID"/>
+        </div>
+        <button type="submit" class="btn-secondary whitespace-nowrap" {% if not bot_token_configured %}disabled{% endif %}>
+          <i class="fa fa-paper-plane"></i> Post panel
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
     <div class="card overflow-hidden">
       <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 gap-2">
         <h2 class="font-semibold text-white min-w-0 truncate">
