@@ -1,4 +1,4 @@
-"""Repository: levels, giveaways, reminders, starboard_messages, highlights, selfroles tables."""
+"""Repository: levels, giveaways, polls, reminders, starboard_messages, highlights, selfroles tables."""
 
 from __future__ import annotations
 
@@ -189,6 +189,117 @@ class CommunityRepo:
         )
         row = await cur.fetchone()
         return row[0] if row else 0
+
+    # ── Polls ──────────────────────────────────────────────────────────
+
+    async def create_poll(
+        self,
+        guild_id: int,
+        channel_id: int,
+        message_id: int,
+        creator_id: int,
+        question: str,
+        options: list[str],
+        multiple_choice: bool = False,
+        anonymous: bool = False,
+        ends_at: str | None = None,
+    ) -> bool:
+        try:
+            await self._conn.execute(
+                "INSERT INTO polls (guild_id, channel_id, message_id, creator_id, question, options, multiple_choice, anonymous, ends_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    guild_id,
+                    channel_id,
+                    message_id,
+                    creator_id,
+                    question,
+                    json.dumps(options),
+                    int(multiple_choice),
+                    int(anonymous),
+                    ends_at,
+                ),
+            )
+            await self._conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def get_poll(self, guild_id: int, message_id: int):
+        cur = await self._conn.execute(
+            "SELECT * FROM polls WHERE guild_id = ? AND message_id = ?",
+            (guild_id, message_id),
+        )
+        return await cur.fetchone()
+
+    async def get_polls(self, guild_id: int, active_only: bool = False):
+        if active_only:
+            cur = await self._conn.execute(
+                "SELECT * FROM polls WHERE guild_id = ? AND (ends_at IS NULL OR ends_at > datetime('now')) "
+                "ORDER BY created_at DESC",
+                (guild_id,),
+            )
+        else:
+            cur = await self._conn.execute(
+                "SELECT * FROM polls WHERE guild_id = ? ORDER BY created_at DESC",
+                (guild_id,),
+            )
+        return await cur.fetchall()
+
+    async def delete_poll(self, guild_id: int, message_id: int) -> bool:
+        poll = await self.get_poll(guild_id, message_id)
+        if not poll:
+            return False
+        await self._conn.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll["id"],))
+        cur = await self._conn.execute(
+            "DELETE FROM polls WHERE guild_id = ? AND message_id = ?",
+            (guild_id, message_id),
+        )
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def add_poll_vote(self, poll_id: int, user_id: int, option_index: int) -> bool:
+        try:
+            await self._conn.execute(
+                "INSERT INTO poll_votes (poll_id, user_id, option_index) VALUES (?, ?, ?)",
+                (poll_id, user_id, option_index),
+            )
+            await self._conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def remove_poll_vote(self, poll_id: int, user_id: int, option_index: int) -> bool:
+        cur = await self._conn.execute(
+            "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ? AND option_index = ?",
+            (poll_id, user_id, option_index),
+        )
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def get_user_poll_votes(self, poll_id: int, user_id: int) -> list[int]:
+        cur = await self._conn.execute(
+            "SELECT option_index FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+            (poll_id, user_id),
+        )
+        rows = await cur.fetchall()
+        return [row["option_index"] for row in rows]
+
+    async def get_poll_results(self, poll_id: int):
+        cur = await self._conn.execute(
+            "SELECT option_index, COUNT(*) as votes FROM poll_votes WHERE poll_id = ? "
+            "GROUP BY option_index ORDER BY option_index",
+            (poll_id,),
+        )
+        return await cur.fetchall()
+
+    async def clear_user_poll_votes(self, poll_id: int, user_id: int) -> int:
+        cur = await self._conn.execute(
+            "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+            (poll_id, user_id),
+        )
+        await self._conn.commit()
+        return cur.rowcount
 
     # ── Reminders ─────────────────────────────────────────────────────
 

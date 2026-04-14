@@ -400,6 +400,56 @@ class Database(BaseDatabase):
     async def get_giveaway_entry_count(self, giveaway_id):
         return await self._community.get_giveaway_entry_count(giveaway_id)
 
+    # ── Polls ─────────────────────────────────────────────────────────
+
+    async def create_poll(
+        self,
+        guild_id,
+        channel_id,
+        message_id,
+        creator_id,
+        question,
+        options,
+        multiple_choice=False,
+        anonymous=False,
+        ends_at=None,
+    ):
+        return await self._community.create_poll(
+            guild_id,
+            channel_id,
+            message_id,
+            creator_id,
+            question,
+            options,
+            multiple_choice,
+            anonymous,
+            ends_at,
+        )
+
+    async def get_poll(self, guild_id, message_id):
+        return await self._community.get_poll(guild_id, message_id)
+
+    async def get_polls(self, guild_id, active_only=False):
+        return await self._community.get_polls(guild_id, active_only)
+
+    async def delete_poll(self, guild_id, message_id):
+        return await self._community.delete_poll(guild_id, message_id)
+
+    async def add_poll_vote(self, poll_id, user_id, option_index):
+        return await self._community.add_poll_vote(poll_id, user_id, option_index)
+
+    async def remove_poll_vote(self, poll_id, user_id, option_index):
+        return await self._community.remove_poll_vote(poll_id, user_id, option_index)
+
+    async def get_user_poll_votes(self, poll_id, user_id):
+        return await self._community.get_user_poll_votes(poll_id, user_id)
+
+    async def get_poll_results(self, poll_id):
+        return await self._community.get_poll_results(poll_id)
+
+    async def clear_user_poll_votes(self, poll_id, user_id):
+        return await self._community.clear_user_poll_votes(poll_id, user_id)
+
     # ── Reminders ─────────────────────────────────────────────────────
 
     async def create_reminder(self, user_id, message, end_time, guild_id=None, channel_id=None):

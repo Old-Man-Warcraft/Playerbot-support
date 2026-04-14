@@ -275,6 +275,31 @@ CREATE TABLE IF NOT EXISTS giveaway_entries (
     PRIMARY KEY (giveaway_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS polls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    message_id      INTEGER UNIQUE,
+    creator_id      INTEGER NOT NULL,
+    question        TEXT    NOT NULL,
+    options         TEXT    NOT NULL,
+    multiple_choice INTEGER NOT NULL DEFAULT 0,
+    anonymous       INTEGER NOT NULL DEFAULT 0,
+    ends_at         TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_polls_guild ON polls (guild_id);
+
+CREATE TABLE IF NOT EXISTS poll_votes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_id      INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    option_index INTEGER NOT NULL,
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(poll_id, user_id, option_index)
+);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes (poll_id, user_id);
+
 CREATE TABLE IF NOT EXISTS reminders (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,

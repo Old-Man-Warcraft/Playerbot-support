@@ -160,17 +160,20 @@ class PollsCog(commands.Cog, name="Polls"):
     async def _register_persistent_poll_views(self) -> None:
         """Re-attach persistent poll views after a bot restart (custom_id routing)."""
         await self.bot.wait_until_ready()
-        async with self._poll_view_register_lock:
-            for guild in self.bot.guilds:
-                polls = await self.db.get_polls(guild.id, active_only=True)
-                for poll in polls:
-                    mid = poll["message_id"]
-                    if mid in self._poll_registered_messages:
-                        continue
-                    options = json.loads(poll["options"])
-                    view = PollView(self, poll, options)
-                    self.bot.add_view(view)
-                    self._poll_registered_messages.add(mid)
+        try:
+            async with self._poll_view_register_lock:
+                for guild in self.bot.guilds:
+                    polls = await self.db.get_polls(guild.id, active_only=True)
+                    for poll in polls:
+                        mid = poll["message_id"]
+                        if mid in self._poll_registered_messages:
+                            continue
+                        options = json.loads(poll["options"])
+                        view = PollView(self, poll, options)
+                        self.bot.add_view(view)
+                        self._poll_registered_messages.add(mid)
+        except Exception:
+            logger.exception("Failed to register persistent poll views")
 
     # ------------------------------------------------------------------
     # Poll command group
