@@ -112,48 +112,58 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
         self.bot = bot
         self.db = db
         self._active_views: dict[int, GiveawayEntryView] = {}
-        self._handling: set[tuple[int, int]] = set()
+        # Messages we registered with add_view (slash + sync); avoids duplicate add_view.
+        self._giveaway_registered_messages: set[int] = set()
 
     async def cog_load(self) -> None:
-        await self._restore_active_views()
         self._giveaway_loop.start()
+        self._sync_giveaway_views.start()
+
+    async def cog_unload(self) -> None:
+        self._giveaway_loop.cancel()
+        self._sync_giveaway_views.cancel()
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        await self._register_views_for_active_giveaways()
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Fallback for giveaway buttons until add_view runs (e.g. dashboard-posted messages)."""
         if interaction.type != discord.InteractionType.component:
             return
         custom_id = (interaction.data or {}).get("custom_id", "")
-        logger.info("on_interaction component: custom_id=%s", custom_id)
         if not custom_id.startswith("giveaway:enter:"):
+            return
+        mid = interaction.message_id
+        if mid and mid in self._giveaway_registered_messages:
             return
         try:
             giveaway_id = int(custom_id.split(":")[2])
         except (IndexError, ValueError):
             return
-        dedup_key = (giveaway_id, interaction.user.id)
-        if dedup_key in self._handling:
-            return
-        self._handling.add(dedup_key)
-        try:
-            # Defer immediately to avoid rate limit timeout
-            if not interaction.response.is_done():
-                try:
-                    logger.info("deferring interaction %s", interaction.id)
-                    await interaction.response.defer(ephemeral=True)
-                    logger.info("defer succeeded")
-                except discord.HTTPException as e:
-                    logger.warning("defer failed: %s", e)
-                    return
-            logger.info("calling handle_entry")
-            await self.handle_entry(interaction, giveaway_id)
-        finally:
-            self._handling.discard(dedup_key)
+        await self.handle_entry(interaction, giveaway_id)
 
-    async def cog_unload(self) -> None:
-        self._giveaway_loop.cancel()
+    async def _register_views_for_active_giveaways(self) -> None:
+        """Register persistent views for active giveaways (dashboard REST + slash + after restart)."""
+        rows = await self.db.get_active_giveaways()
+        for row in rows:
+            message_id = row["message_id"]
+            giveaway_id = row["id"]
+            if not message_id or message_id in self._giveaway_registered_messages:
+                continue
+            view = GiveawayEntryView(self, giveaway_id)
+            self.bot.add_view(view, message_id=message_id)
+            self._active_views[giveaway_id] = view
+            self._giveaway_registered_messages.add(message_id)
 
-    async def _restore_active_views(self) -> None:
-        pass  # on_interaction handles all giveaway button clicks centrally
+    @tasks.loop(seconds=20)
+    async def _sync_giveaway_views(self) -> None:
+        await self._register_views_for_active_giveaways()
+
+    @_sync_giveaway_views.before_loop
+    async def _before_sync_giveaway_views(self) -> None:
+        await self.bot.wait_until_ready()
 
     # ------------------------------------------------------------------
     # Background loop: end expired giveaways
@@ -199,6 +209,8 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
     # ------------------------------------------------------------------
 
     async def handle_entry(self, interaction: discord.Interaction, giveaway_id: int) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         logger.info("handle_entry: giveaway_id=%s user_id=%s", giveaway_id, interaction.user.id)
 
         # Single fresh connection covers status check, INSERT/DELETE, and COUNT
@@ -319,6 +331,9 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
 
         if giveaway_id in self._active_views:
             del self._active_views[giveaway_id]
+        mid = row["message_id"]
+        if mid:
+            self._giveaway_registered_messages.discard(mid)
 
         return winners
 
@@ -410,6 +425,7 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
         msg = await target_channel.send(embed=em, view=view)
         await self.db.set_giveaway_message(giveaway_id, msg.id)
         self.bot.add_view(view, message_id=msg.id)
+        self._giveaway_registered_messages.add(msg.id)
 
         await interaction.response.send_message(
             f"✅ Giveaway **#{giveaway_id}** started in {target_channel.mention}!", ephemeral=True
@@ -496,6 +512,8 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
 
         if giveaway_id in self._active_views:
             del self._active_views[giveaway_id]
+        if row["message_id"]:
+            self._giveaway_registered_messages.discard(row["message_id"])
 
         await interaction.response.send_message(f"✅ Giveaway **#{giveaway_id}** cancelled.", ephemeral=True)
 
