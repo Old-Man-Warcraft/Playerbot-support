@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS giveaways (
     channel_id  INTEGER NOT NULL,
     message_id  INTEGER,
     prize       TEXT    NOT NULL,
+    start_time  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     end_time    TEXT    NOT NULL,
     winner_count INTEGER NOT NULL DEFAULT 1,
     host_id     INTEGER NOT NULL,

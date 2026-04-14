@@ -315,10 +315,11 @@ def init(templates: Jinja2Templates) -> APIRouter:
             giveaway_id = None
             async with aiosqlite.connect(DB_PATH) as _db:
                 _db.row_factory = aiosqlite.Row
+                start_dt = datetime.now(timezone.utc)
                 cur = await _db.execute(
-                    "INSERT INTO giveaways (guild_id, channel_id, prize, end_time, winner_count, host_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (guild_id, channel_id, prize, end_dt.isoformat(), winner_count, host_id),
+                    "INSERT INTO giveaways (guild_id, channel_id, prize, start_time, end_time, winner_count, host_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (guild_id, channel_id, prize, start_dt.isoformat(), end_dt.isoformat(), winner_count, host_id),
                 )
                 await _db.commit()
                 giveaway_id = cur.lastrowid

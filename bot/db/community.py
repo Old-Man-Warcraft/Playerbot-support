@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import aiosqlite
 
 
@@ -110,10 +112,11 @@ class CommunityRepo:
         winner_count: int,
         host_id: int,
     ) -> int:
+        start_time = datetime.now(timezone.utc).isoformat()
         cur = await self._conn.execute(
-            "INSERT INTO giveaways (guild_id, channel_id, prize, end_time, winner_count, host_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (guild_id, channel_id, prize, end_time, winner_count, host_id),
+            "INSERT INTO giveaways (guild_id, channel_id, prize, start_time, end_time, winner_count, host_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (guild_id, channel_id, prize, start_time, end_time, winner_count, host_id),
         )
         await self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]

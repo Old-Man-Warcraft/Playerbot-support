@@ -160,6 +160,7 @@ class BaseDatabase:
         for col, defn in [
             ("message_id", "INTEGER"),
             ("created_at", "TEXT"),
+            ("start_time", "TEXT"),
         ]:
             if col not in giveaway_cols:
                 await self._db.execute(  # type: ignore[union-attr]

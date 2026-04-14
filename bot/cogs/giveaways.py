@@ -166,6 +166,16 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
                     end_time = end_time.replace(tzinfo=timezone.utc)
             except (TypeError, ValueError):
                 continue
+            raw_start = row["start_time"]
+            if raw_start:
+                try:
+                    start_time = datetime.fromisoformat(raw_start)
+                    if start_time.tzinfo is None:
+                        start_time = start_time.replace(tzinfo=timezone.utc)
+                    if start_time > now:
+                        continue
+                except (TypeError, ValueError):
+                    pass
             if end_time <= now:
                 await self._end_giveaway(row["id"])
 

@@ -145,6 +145,7 @@
               <th class="px-4 py-3 font-medium">Prize</th>
               <th class="px-4 py-3 font-medium">Winners</th>
               <th class="px-4 py-3 font-medium">Entries</th>
+              <th class="px-4 py-3 font-medium">Starts</th>
               <th class="px-4 py-3 font-medium">Ends</th>
               <th class="px-4 py-3 font-medium">Channel</th>
               {% if guild_id %}<th class="px-4 py-3 font-medium">Actions</th>{% endif %}
@@ -164,6 +165,7 @@
               <td class="px-4 py-3 text-gray-200 font-medium max-w-[180px] truncate" title="{{ g.prize }}">{{ g.prize }}</td>
               <td class="px-4 py-3 text-gray-400 text-center">{{ g.winner_count }}</td>
               <td class="px-4 py-3 text-gray-400 text-center">{{ entry_counts.get(g.id, 0) }}</td>
+              <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ g.start_time[:16] if g.start_time else "—" }} <span class="text-gray-600">UTC</span></td>
               <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ g.end_time[:16] if g.end_time else "—" }} <span class="text-gray-600">UTC</span></td>
               <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ g.channel_id }}</td>
               {% if guild_id %}
@@ -201,7 +203,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="{% if guild_id %}8{% else %}7{% endif %}" class="px-4 py-12 text-center text-gray-500">
+              <td colspan="{% if guild_id %}9{% else %}8{% endif %}" class="px-4 py-12 text-center text-gray-500">
                 <i class="fa fa-gift text-2xl mb-2 block opacity-30"></i>
                 No giveaways found
               </td>
