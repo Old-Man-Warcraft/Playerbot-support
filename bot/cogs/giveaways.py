@@ -15,6 +15,7 @@ Duration string format: 1d2h30m  (days / hours / minutes / seconds)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
@@ -38,7 +39,10 @@ def _giveaway_component_message_id(interaction: discord.Interaction) -> int | No
     msg = interaction.message
     if msg is not None:
         return msg.id
-    return getattr(interaction, "message_id", None)
+    mid = getattr(interaction, "message_id", None)
+    if mid is not None:
+        return int(mid)
+    return None
 
 
 _DURATION_RE = re.compile(
@@ -122,10 +126,23 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
         self._active_views: dict[int, GiveawayEntryView] = {}
         # Messages we registered with add_view (slash + sync); avoids duplicate add_view.
         self._giveaway_registered_messages: set[int] = set()
+        # One lock per interaction id so View + on_interaction cannot both defer the same click.
+        self._giveaway_entry_locks: dict[int, asyncio.Lock] = {}
+
+    def _giveaway_entry_lock(self, interaction_id: int) -> asyncio.Lock:
+        lock = self._giveaway_entry_locks.get(interaction_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._giveaway_entry_locks[interaction_id] = lock
+        return lock
 
     async def cog_load(self) -> None:
         self._giveaway_loop.start()
         self._sync_giveaway_views.start()
+        try:
+            asyncio.get_running_loop().create_task(self._register_views_for_active_giveaways())
+        except RuntimeError:
+            pass
 
     async def cog_unload(self) -> None:
         self._giveaway_loop.cancel()
@@ -168,7 +185,7 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
             self._active_views[giveaway_id] = view
             self._giveaway_registered_messages.add(message_id)
 
-    @tasks.loop(seconds=20)
+    @tasks.loop(seconds=5)
     async def _sync_giveaway_views(self) -> None:
         await self._register_views_for_active_giveaways()
 
@@ -220,62 +237,65 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
     # ------------------------------------------------------------------
 
     async def handle_entry(self, interaction: discord.Interaction, giveaway_id: int) -> None:
-        if not interaction.response.is_done():
+        lock = self._giveaway_entry_lock(interaction.id)
+        async with lock:
+            if interaction.response.is_done():
+                return
             await interaction.response.defer(ephemeral=True)
-        logger.info("handle_entry: giveaway_id=%s user_id=%s", giveaway_id, interaction.user.id)
+            logger.info("handle_entry: giveaway_id=%s user_id=%s", giveaway_id, interaction.user.id)
 
-        # Single fresh connection covers status check, INSERT/DELETE, and COUNT
-        # atomically — prevents entries into ended giveaways and stale reads.
-        async with aiosqlite.connect(DB_PATH) as _db:
-            _db.row_factory = aiosqlite.Row
+            # Single fresh connection covers status check, INSERT/DELETE, and COUNT
+            # atomically — prevents entries into ended giveaways and stale reads.
+            async with aiosqlite.connect(DB_PATH) as _db:
+                _db.row_factory = aiosqlite.Row
 
-            cur = await _db.execute("SELECT * FROM giveaways WHERE id = ?", (giveaway_id,))
-            row = await cur.fetchone()
-            if not row:
-                logger.warning("handle_entry: giveaway %s not found", giveaway_id)
-                await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
-                return
-            if row["status"] != "active":
-                logger.warning("handle_entry: giveaway %s not active (status=%s)", giveaway_id, row["status"])
-                await interaction.followup.send("❌ This giveaway has ended.", ephemeral=True)
-                return
+                cur = await _db.execute("SELECT * FROM giveaways WHERE id = ?", (giveaway_id,))
+                row = await cur.fetchone()
+                if not row:
+                    logger.warning("handle_entry: giveaway %s not found", giveaway_id)
+                    await interaction.followup.send("❌ Giveaway not found.", ephemeral=True)
+                    return
+                if row["status"] != "active":
+                    logger.warning("handle_entry: giveaway %s not active (status=%s)", giveaway_id, row["status"])
+                    await interaction.followup.send("❌ This giveaway has ended.", ephemeral=True)
+                    return
 
-            logger.info("handle_entry: calling enter_giveaway")
-            try:
-                await _db.execute(
-                    "INSERT INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)",
-                    (giveaway_id, interaction.user.id),
+                logger.info("handle_entry: calling enter_giveaway")
+                try:
+                    await _db.execute(
+                        "INSERT INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)",
+                        (giveaway_id, interaction.user.id),
+                    )
+                    await _db.commit()
+                    entered = True
+                    logger.info("handle_entry: enter_giveaway succeeded")
+                except aiosqlite.IntegrityError:
+                    entered = False
+                    logger.info("handle_entry: enter_giveaway duplicate entry")
+                    await _db.execute(
+                        "DELETE FROM giveaway_entries WHERE giveaway_id = ? AND user_id = ?",
+                        (giveaway_id, interaction.user.id),
+                    )
+                    await _db.commit()
+
+                cur = await _db.execute(
+                    "SELECT COUNT(*) FROM giveaway_entries WHERE giveaway_id = ?",
+                    (giveaway_id,),
                 )
-                await _db.commit()
-                entered = True
-                logger.info("handle_entry: enter_giveaway succeeded")
-            except aiosqlite.IntegrityError:
-                entered = False
-                logger.info("handle_entry: enter_giveaway duplicate entry")
-                await _db.execute(
-                    "DELETE FROM giveaway_entries WHERE giveaway_id = ? AND user_id = ?",
-                    (giveaway_id, interaction.user.id),
+                count_row = await cur.fetchone()
+                count = count_row[0] if count_row else 0
+                logger.info("handle_entry: entry_count=%s", count)
+
+            if entered:
+                await interaction.followup.send(
+                    f"✅ You entered the giveaway! **{count}** total entries.", ephemeral=True
                 )
-                await _db.commit()
+            else:
+                await interaction.followup.send(
+                    f"↩️ You withdrew your entry. **{count}** total entries.", ephemeral=True
+                )
 
-            cur = await _db.execute(
-                "SELECT COUNT(*) FROM giveaway_entries WHERE giveaway_id = ?",
-                (giveaway_id,),
-            )
-            count_row = await cur.fetchone()
-            count = count_row[0] if count_row else 0
-            logger.info("handle_entry: entry_count=%s", count)
-
-        if entered:
-            await interaction.followup.send(
-                f"✅ You entered the giveaway! **{count}** total entries.", ephemeral=True
-            )
-        else:
-            await interaction.followup.send(
-                f"↩️ You withdrew your entry. **{count}** total entries.", ephemeral=True
-            )
-
-        await self._update_embed(row, count=count)
+            await self._update_embed(row, count=count)
 
     # ------------------------------------------------------------------
     # Core: end giveaway and pick winners
