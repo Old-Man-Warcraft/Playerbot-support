@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -144,6 +145,15 @@ class CommunityRepo:
     async def end_giveaway(self, giveaway_id: int) -> None:
         await self._conn.execute(
             "UPDATE giveaways SET status = 'ended' WHERE id = ?", (giveaway_id,)
+        )
+        await self._conn.commit()
+
+    async def set_giveaway_winners(self, giveaway_id: int, user_ids: list[int] | None) -> None:
+        """Persist winner Discord user IDs as JSON array; ``None`` clears the column."""
+        payload = json.dumps(user_ids) if user_ids is not None else None
+        await self._conn.execute(
+            "UPDATE giveaways SET winner_user_ids = ? WHERE id = ?",
+            (payload, giveaway_id),
         )
         await self._conn.commit()
 

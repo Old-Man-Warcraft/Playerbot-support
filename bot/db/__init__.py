@@ -385,6 +385,9 @@ class Database(BaseDatabase):
     async def end_giveaway(self, giveaway_id):
         return await self._community.end_giveaway(giveaway_id)
 
+    async def set_giveaway_winners(self, giveaway_id, user_ids):
+        return await self._community.set_giveaway_winners(giveaway_id, user_ids)
+
     async def enter_giveaway(self, giveaway_id, user_id):
         return await self._community.enter_giveaway(giveaway_id, user_id)
 

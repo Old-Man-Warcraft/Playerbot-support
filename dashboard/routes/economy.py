@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -87,6 +88,24 @@ def _giveaway_embed_payload(
         "fields": fields,
         "footer": {"text": footer_text},
     }
+
+
+def _parse_stored_winners_row(row) -> list[int]:
+    """Discord user IDs from ``giveaways.winner_user_ids`` JSON; empty if missing or invalid."""
+    if not row:
+        return []
+    if "winner_user_ids" not in row.keys():
+        return []
+    raw = row["winner_user_ids"]
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            return []
+        return [int(x) for x in data]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
 
 
 async def _discord_post_message(channel_id: int, embed: dict, components: list | None = None) -> dict | None:
@@ -275,6 +294,10 @@ def init(templates: Jinja2Templates) -> APIRouter:
                 )
                 entry_counts[g["id"]] = row["c"] if row else 0
 
+        winner_lists: dict[int, list[int]] = {}
+        for g in giveaways:
+            winner_lists[g["id"]] = _parse_stored_winners_row(g)
+
         flash_error = request.session.pop("flash_error", None)
         flash_ok = request.session.pop("flash_ok", None)
         return templates.TemplateResponse(request, "giveaways.html", ctx({
@@ -283,6 +306,7 @@ def init(templates: Jinja2Templates) -> APIRouter:
             "status": status,
             "giveaways": giveaways,
             "entry_counts": entry_counts,
+            "winner_lists": winner_lists,
             "flash_error": flash_error,
             "flash_ok": flash_ok,
             "active_page": "giveaways",
@@ -392,14 +416,17 @@ def init(templates: Jinja2Templates) -> APIRouter:
         if not row:
             return RedirectResponse(f"/giveaways?guild_id={guild_id}", status_code=302)
 
-        await db_execute("UPDATE giveaways SET status = 'ended' WHERE id = ?", (giveaway_id,))
-
         entry_rows = await db_fetchall(
             "SELECT user_id FROM giveaway_entries WHERE giveaway_id = ?", (giveaway_id,)
         )
         entries = [r["user_id"] for r in entry_rows]
         winner_count = min(row["winner_count"], len(entries))
         winners = random.sample(entries, winner_count) if entries else []
+
+        await db_execute(
+            "UPDATE giveaways SET status = 'ended', winner_user_ids = ? WHERE id = ?",
+            (json.dumps(winners), giveaway_id),
+        )
 
         end_time = datetime.fromisoformat(row["end_time"])
         embed = _giveaway_embed_payload(
@@ -442,7 +469,10 @@ def init(templates: Jinja2Templates) -> APIRouter:
         if not row:
             return RedirectResponse(f"/giveaways?guild_id={guild_id}", status_code=302)
 
-        await db_execute("UPDATE giveaways SET status = 'ended' WHERE id = ?", (giveaway_id,))
+        await db_execute(
+            "UPDATE giveaways SET status = 'ended', winner_user_ids = NULL WHERE id = ?",
+            (giveaway_id,),
+        )
 
         end_time = datetime.fromisoformat(row["end_time"])
         embed = _giveaway_embed_payload(
@@ -483,12 +513,63 @@ def init(templates: Jinja2Templates) -> APIRouter:
 
         winner_count = min(row["winner_count"], len(entries))
         winners = random.sample(entries, winner_count)
+        await db_execute(
+            "UPDATE giveaways SET winner_user_ids = ? WHERE id = ?",
+            (json.dumps(winners), giveaway_id),
+        )
+        end_time = datetime.fromisoformat(row["end_time"])
+        embed = _giveaway_embed_payload(
+            giveaway_id=giveaway_id,
+            prize=row["prize"],
+            end_time=end_time,
+            winner_count=row["winner_count"],
+            host_id=row["host_id"],
+            entry_count=len(entries),
+            ended=True,
+            winners=winners,
+        )
+        await _discord_edit_message(row["channel_id"], row["message_id"], embed, remove_components=True)
         winner_mentions = " ".join(f"<@{w}>" for w in winners)
         await _discord_send_message(
             row["channel_id"],
             f"🔄 Reroll! New winners for giveaway **#{giveaway_id}** ({row['prize']}): {winner_mentions}!",
         )
 
+        return RedirectResponse(f"/giveaways?guild_id={guild_id}&status=ended", status_code=302)
+
+    @router.post("/giveaways/announce")
+    async def giveaways_announce(
+        request: Request,
+        guild_id: int = Form(...),
+        giveaway_id: int = Form(...),
+    ):
+        if r := auth_redirect(request):
+            return r
+        await require_guild_access(request, guild_id)
+
+        row = await db_fetchone(
+            "SELECT * FROM giveaways WHERE id = ? AND guild_id = ? AND status = 'ended'",
+            (giveaway_id, guild_id),
+        )
+        if not row:
+            request.session["flash_error"] = "Giveaway not found or not ended."
+            return RedirectResponse(f"/giveaways?guild_id={guild_id}&status=ended", status_code=302)
+
+        winners = _parse_stored_winners_row(row)
+        if not winners:
+            request.session["flash_error"] = (
+                "No recorded winners for this giveaway — nothing to post "
+                "(legacy ended giveaways, no entries, or cancelled giveaways have no winner list)."
+            )
+            return RedirectResponse(f"/giveaways?guild_id={guild_id}&status=ended", status_code=302)
+
+        winner_mentions = " ".join(f"<@{w}>" for w in winners)
+        await _discord_send_message(
+            row["channel_id"],
+            f"🎉 Giveaway **#{giveaway_id}** — winners: {winner_mentions}! "
+            f"Prize: **{row['prize']}**",
+        )
+        request.session["flash_ok"] = f"Posted winner announcement for giveaway #{giveaway_id} in Discord."
         return RedirectResponse(f"/giveaways?guild_id={guild_id}&status=ended", status_code=302)
 
     @router.get("/api/guild-channels/{guild_id}")

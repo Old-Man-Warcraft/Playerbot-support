@@ -161,6 +161,7 @@ class BaseDatabase:
             ("message_id", "INTEGER"),
             ("created_at", "TEXT"),
             ("start_time", "TEXT"),
+            ("winner_user_ids", "TEXT"),
         ]:
             if col not in giveaway_cols:
                 await self._db.execute(  # type: ignore[union-attr]

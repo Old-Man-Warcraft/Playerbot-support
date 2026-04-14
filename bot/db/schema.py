@@ -263,6 +263,7 @@ CREATE TABLE IF NOT EXISTS giveaways (
     winner_count INTEGER NOT NULL DEFAULT 1,
     host_id     INTEGER NOT NULL,
     status      TEXT    NOT NULL DEFAULT 'active',
+    winner_user_ids TEXT,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_giveaways_guild ON giveaways (guild_id, status);

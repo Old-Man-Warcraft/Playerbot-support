@@ -503,6 +503,79 @@ class GitHubCog(commands.Cog, name="GitHub"):
         for ev in reversed(new_events):
             await self._dispatch_event(repo, ev, subscribers)
 
+    async def _generate_commit_embeddings(self, repo: str, commits: list[dict], branch: str, pusher: str) -> None:
+        """Generate RAG embeddings for GitHub push commits."""
+        support_cog = self.bot.get_cog("Support")
+        if support_cog is None:
+            return
+        llm = getattr(support_cog, "llm", None)
+        if llm is None:
+            return
+        repo_url = f"https://github.com/{repo}"
+        for commit in commits:
+            sha = commit.get("sha") or commit.get("id", "")
+            if not sha:
+                continue
+            author = commit.get("author") or {}
+            author_name = author.get("name") or author.get("login") or "Unknown"
+            author_email = author.get("email") or ""
+            message = commit.get("message") or ""
+            url = commit.get("url") or f"{repo_url}/commit/{sha}"
+            timestamp = (author.get("date") or "").split("T")[0]
+            added = commit.get("added") or []
+            removed = commit.get("removed") or []
+            modified = commit.get("modified") or []
+            lines = [
+                f"Commit: {sha[:7]}",
+                f"Repository: {repo}",
+                f"Branch: {branch}",
+                f"Author: {author_name}" + (f" <{author_email}>" if author_email else ""),
+                f"Pushed by: {pusher}",
+                f"URL: {url}",
+            ]
+            if timestamp:
+                lines.append(f"Date: {timestamp}")
+            lines += ["", "Commit Message:", message]
+            if added or removed or modified:
+                lines.append("")
+                lines.append("File Changes:")
+                if added:
+                    lines.append(f"Added: {', '.join(added)}")
+                if removed:
+                    lines.append(f"Removed: {', '.join(removed)}")
+                if modified:
+                    lines.append(f"Modified: {', '.join(modified)}")
+            text = "\n".join(lines)
+            label = f"commit:{repo}:{sha[:7]}"
+            try:
+                vec = await llm.get_embedding(text[:8000])
+                if vec:
+                    import struct
+                    embedding_bytes = struct.pack(f"{len(vec)}f", *vec)
+                    model = getattr(llm, "_embedding_model", None)
+                    subs = await self.db.get_all_github_subscriptions()
+                    guild_ids = {s["guild_id"] for s in subs if s["repo"] == repo}
+                    for guild_id in guild_ids:
+                        added_ok = await self.db.add_embedding(
+                            guild_id=guild_id,
+                            name=label,
+                            text=text[:12000],
+                            embedding=embedding_bytes,
+                            model=model,
+                            source_url=url,
+                        )
+                        if not added_ok:
+                            await self.db.update_embedding(
+                                guild_id=guild_id,
+                                name=label,
+                                text=text[:12000],
+                                embedding=embedding_bytes,
+                                model=model,
+                                source_url=url,
+                            )
+            except Exception as exc:
+                logger.debug("GitHub: failed to embed commit %s: %s", sha[:7], exc)
+
     async def _dispatch_event(self, repo: str, event: dict, subscribers: list) -> None:
         event_type = event.get("type", "")
         payload = event.get("payload") or {}
@@ -519,7 +592,7 @@ class GitHubCog(commands.Cog, name="GitHub"):
                 ref = payload.get("ref", "")
                 branch = ref.split("/")[-1] if "/" in ref else ref
                 pusher_name = payload.get("pusher", {}).get("name") or (event.get("actor") or {}).get("login", "someone")
-                await _generate_commit_embeddings(self, repo, commits, branch, pusher_name)
+                await self._generate_commit_embeddings(repo, commits, branch, pusher_name)
         elif event_type == "PullRequestEvent":
             embed = _pr_embed(repo, payload)
             event_key = "pull_request"

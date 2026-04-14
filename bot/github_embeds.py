@@ -345,6 +345,31 @@ def _make_user_embed(data: dict) -> discord.Embed:
 # ---------------------------------------------------------------------------
 
 
+def _fmt_commit_line(c: dict, repo_url: str) -> str:
+    """Format a single commit as a hyperlinked line with author and optional file stats."""
+    full_sha = c.get("sha") or c.get("id", "")
+    sha = full_sha[:7]
+    msg = _trunc((c.get("message") or "").splitlines()[0], 60)
+    url = c.get("url", "")
+    if not url.startswith("https://github.com"):
+        url = f"{repo_url}/commit/{full_sha}"
+    author = (c.get("author") or c.get("committer") or {})
+    author_name = author.get("login") or author.get("name") or ""
+    added = len(c.get("added") or [])
+    removed = len(c.get("removed") or [])
+    modified = len(c.get("modified") or [])
+    stats_parts = []
+    if added:
+        stats_parts.append(f"+{added}")
+    if removed:
+        stats_parts.append(f"-{removed}")
+    if modified:
+        stats_parts.append(f"~{modified}")
+    stats = f" `[{', '.join(stats_parts)}]`" if stats_parts else ""
+    author_str = f" — `{author_name}`" if author_name else ""
+    return f"[`{sha}`]({url}) {msg}{stats}{author_str}"
+
+
 def _push_embed(repo: str, payload: dict, actor: dict | None = None) -> discord.Embed:
     ref = payload.get("ref", "")
     branch = ref.split("/")[-1] if "/" in ref else ref
@@ -360,16 +385,54 @@ def _push_embed(repo: str, payload: dict, actor: dict | None = None) -> discord.
         timestamp=datetime.now(timezone.utc),
     )
     em.set_author(name=pusher_name, url=f"https://github.com/{pusher_name}", icon_url=avatar_url)
+
     lines = []
-    for c in commits[:5]:
-        full_sha = c.get("sha") or c.get("id", "")
-        sha = full_sha[:7]
-        msg = _trunc(c.get("message", "").splitlines()[0], 72)
-        url = c.get("url", "") if c.get("url", "").startswith("https://github.com") else f"{repo_url}/commit/{full_sha}"
-        lines.append(f"[`{sha}`]({url}) {msg}")
-    if len(commits) > 5:
-        lines.append(f"…and {len(commits) - 5} more")
+    for c in commits[:6]:
+        lines.append(_fmt_commit_line(c, repo_url))
+    if len(commits) > 6:
+        lines.append(f"…and {len(commits) - 6} more")
     em.description = "\n".join(lines) or _trunc(head.get("message", ""), 200)
+
+    # Head commit detail field
+    if head:
+        head_sha = (head.get("id") or "")[:7]
+        head_url = head.get("url") or f"{repo_url}/commit/{head.get('id', '')}"
+        head_author = head.get("author") or {}
+        head_committer = head.get("committer") or {}
+        head_msg = _trunc((head.get("message") or ""), 200)
+        detail_parts = [f"[`{head_sha}`]({head_url})"]
+        if head_author.get("name"):
+            detail_parts.append(f"**Author:** {head_author['name']}")
+            if head_author.get("email"):
+                detail_parts[-1] += f" <{head_author['email']}>"
+        committer_name = head_committer.get("name") or ""
+        if committer_name and committer_name != head_author.get("name"):
+            detail_parts.append(f"**Committer:** {committer_name}")
+        if head_author.get("date"):
+            detail_parts.append(f"**Date:** {_ts(head_author['date'])}")
+        added_files = head.get("added") or []
+        removed_files = head.get("removed") or []
+        modified_files = head.get("modified") or []
+        file_parts = []
+        if added_files:
+            file_parts.append(f"`+{len(added_files)}` added")
+        if removed_files:
+            file_parts.append(f"`-{len(removed_files)}` removed")
+        if modified_files:
+            file_parts.append(f"`~{len(modified_files)}` modified")
+        if file_parts:
+            detail_parts.append("**Files:** " + "  ".join(file_parts))
+        if head_msg:
+            detail_parts.append(f"```\n{head_msg[:300]}\n```")
+        em.add_field(name="Head Commit", value="\n".join(detail_parts), inline=False)
+
+    # Before/after SHAs
+    before = (payload.get("before") or "")[:7]
+    after = (payload.get("after") or "")[:7]
+    if before and after and before != "0000000":
+        compare_url = payload.get("compare") or f"{repo_url}/compare/{before}...{after}"
+        em.add_field(name="Compare", value=f"[`{before}...{after}`]({compare_url})", inline=True)
+
     em.set_footer(text=f"{repo}  •  {len(commits)} commit(s)")
     return em
 
@@ -386,6 +449,7 @@ def _pr_embed(repo: str, payload: dict) -> discord.Embed | None:
     icon_map = {"opened": "🟢", "closed": "🔴", "reopened": "🟢", "merged": "🟣"}
     icon = icon_map.get(action, "⚪")
     sender = payload.get("sender", {}).get("login", "")
+    sender_avatar = payload.get("sender", {}).get("avatar_url")
     em = discord.Embed(
         title=f"{icon} PR #{pr.get('number')} {action}: {_trunc(pr.get('title', ''), 80)}",
         url=pr.get("html_url", ""),
@@ -393,28 +457,54 @@ def _pr_embed(repo: str, payload: dict) -> discord.Embed | None:
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
-    em.set_author(name=sender, url=f"https://github.com/{sender}",
-                  icon_url=payload.get("sender", {}).get("avatar_url"))
-    base = pr.get("base", {}).get("label", "")
-    head = pr.get("head", {}).get("label", "")
-    em.add_field(name="Branch", value=f"`{head}` → `{base}`", inline=True)
+    em.set_author(name=sender, url=f"https://github.com/{sender}", icon_url=sender_avatar)
+
+    base_label = (pr.get("base") or {}).get("label", "")
+    head_label = (pr.get("head") or {}).get("label", "")
+    head_sha = ((pr.get("head") or {}).get("sha") or "")[:7]
+    base_sha = ((pr.get("base") or {}).get("sha") or "")[:7]
+    branch_val = f"`{head_label}` → `{base_label}`"
+    if head_sha and base_sha:
+        branch_val += f"  (`{head_sha}` → `{base_sha}`)"
+    em.add_field(name="Branch", value=branch_val, inline=False)
+
     changed_files = pr.get("changed_files")
     additions = pr.get("additions")
     deletions = pr.get("deletions")
+    commits_count = pr.get("commits")
     diff_parts = []
     if changed_files is not None:
-        diff_parts.append(f"{changed_files} file(s)")
-    if additions is not None and deletions is not None:
-        diff_parts.append(f"`+{additions}` / `-{deletions}`")
+        diff_parts.append(f"`{changed_files}` file(s) changed")
+    if additions is not None:
+        diff_parts.append(f"`+{additions}`")
+    if deletions is not None:
+        diff_parts.append(f"`-{deletions}`")
     if diff_parts:
-        em.add_field(name="Changes", value="  ".join(diff_parts), inline=True)
-    em.add_field(name="Commits", value=str(pr.get("commits", "?")), inline=True)
+        em.add_field(name="Diff", value="  ".join(diff_parts), inline=True)
+    if commits_count is not None:
+        em.add_field(name="Commits", value=str(commits_count), inline=True)
+
+    # Merge commit info
+    if action == "merged":
+        merge_sha = (pr.get("merge_commit_sha") or "")[:7]
+        merged_by = (pr.get("merged_by") or {}).get("login") or ""
+        merge_parts = []
+        if merge_sha:
+            merge_parts.append(f"`{merge_sha}`")
+        if merged_by:
+            merge_parts.append(f"by `{merged_by}`")
+        if merge_parts:
+            em.add_field(name="Merged", value="  ".join(merge_parts), inline=True)
+
     assignees = [a.get("login", "") for a in (pr.get("assignees") or []) if a.get("login")]
     if assignees:
         em.add_field(name="Assignees", value=" ".join(f"`{a}`" for a in assignees[:5]), inline=True)
     reviewers = _requested_reviewer_names(pr)
     if reviewers:
         em.add_field(name="Reviewers", value=" ".join(f"`{r}`" for r in reviewers[:5]), inline=True)
+    labels = [lbl.get("name", "") for lbl in (pr.get("labels") or []) if lbl.get("name")]
+    if labels:
+        em.add_field(name="Labels", value=" ".join(f"`{l}`" for l in labels[:6]), inline=True)
     milestone = (pr.get("milestone") or {}).get("title")
     if milestone:
         em.add_field(name="Milestone", value=milestone, inline=True)

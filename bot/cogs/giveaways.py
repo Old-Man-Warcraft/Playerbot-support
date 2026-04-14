@@ -16,6 +16,7 @@ Duration string format: 1d2h30m  (days / hours / minutes / seconds)
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
@@ -318,6 +319,7 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
         entries = await self.db.get_giveaway_entries(giveaway_id)
         winner_count = min(row["winner_count"], len(entries))
         winners = random.sample(entries, winner_count) if entries else []
+        await self.db.set_giveaway_winners(giveaway_id, winners)
 
         end_time = datetime.fromisoformat(row["end_time"])
         count = len(entries)
@@ -494,6 +496,7 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
             return
 
         winners = random.sample(entries, winner_count)
+        await self.db.set_giveaway_winners(giveaway_id, winners)
         winner_mentions = " ".join(f"<@{w}>" for w in winners)
 
         guild = interaction.guild
@@ -503,6 +506,23 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
             await channel.send(
                 f"🔄 Reroll! New winners for giveaway **#{giveaway_id}** ({row['prize']}): {winner_mentions}!"
             )
+            if row["message_id"]:
+                try:
+                    end_time = datetime.fromisoformat(row["end_time"])
+                    msg = await channel.fetch_message(row["message_id"])
+                    em = _giveaway_embed(
+                        giveaway_id=giveaway_id,
+                        prize=row["prize"],
+                        end_time=end_time,
+                        winner_count=row["winner_count"],
+                        host_id=row["host_id"],
+                        entry_count=len(entries),
+                        ended=True,
+                        winners=winners,
+                    )
+                    await msg.edit(embed=em, view=None)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
 
         await interaction.response.send_message(
             f"✅ Rerolled! New winners: {winner_mentions}", ephemeral=True
@@ -519,6 +539,7 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
             return
 
         await self.db.end_giveaway(giveaway_id)
+        await self.db.set_giveaway_winners(giveaway_id, None)
 
         guild = interaction.guild
         assert guild is not None
@@ -584,6 +605,16 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
 
         count = await self.db.get_giveaway_entry_count(giveaway_id)
         end_time = datetime.fromisoformat(row["end_time"])
+        winners_for_embed: list[int] | None = None
+        if row["status"] == "ended":
+            raw = row["winner_user_ids"] if "winner_user_ids" in row.keys() else None
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        winners_for_embed = [int(x) for x in parsed]
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    winners_for_embed = None
         em = _giveaway_embed(
             giveaway_id=giveaway_id,
             prize=row["prize"],
@@ -592,5 +623,6 @@ class GiveawayCog(commands.Cog, name="Giveaways"):
             host_id=row["host_id"],
             entry_count=count,
             ended=row["status"] == "ended",
+            winners=winners_for_embed,
         )
         await interaction.response.send_message(embed=em, ephemeral=True)

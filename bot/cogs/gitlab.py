@@ -152,6 +152,28 @@ def _make_user_embed(data: dict, base_url: str) -> discord.Embed:
 # Notification embed builders
 # ---------------------------------------------------------------------------
 
+def _fmt_gl_commit_line(c: dict) -> str:
+    """Format a single GitLab commit as a hyperlinked line with author and file stats."""
+    sha = (c.get("id") or "")[:7]
+    msg = _trunc((c.get("message") or "").splitlines()[0], 60)
+    url = c.get("url") or c.get("web_url", "")
+    author = c.get("author") or {}
+    author_name = author.get("name") or c.get("author_name") or ""
+    added = c.get("added") or []
+    removed = c.get("removed") or []
+    modified = c.get("modified") or []
+    stats_parts = []
+    if added:
+        stats_parts.append(f"+{len(added)}")
+    if removed:
+        stats_parts.append(f"-{len(removed)}")
+    if modified:
+        stats_parts.append(f"~{len(modified)}")
+    stats = f" `[{', '.join(stats_parts)}]`" if stats_parts else ""
+    author_str = f" — `{author_name}`" if author_name else ""
+    return f"[`{sha}`]({url}) {msg}{stats}{author_str}"
+
+
 def _push_embed(project: str, payload: dict, base_url: str) -> discord.Embed:
     ref = payload.get("ref", "")
     branch = ref.split("/")[-1] if "/" in ref else ref
@@ -159,22 +181,57 @@ def _push_embed(project: str, payload: dict, base_url: str) -> discord.Embed:
     pusher = (payload.get("user_username") or payload.get("user_name") or "someone")
     project_url = payload.get("project", {}).get("web_url") or f"{base_url}/{project}"
     author_avatar = payload.get("user_avatar")
+    before = (payload.get("before") or "")[:7]
+    after = (payload.get("after") or "")[:7]
     em = discord.Embed(
         title=f"📦 Push to `{project}` on `{branch}`",
-        url=f"{project_url}/-/tree/{branch}",
+        url=f"{project_url}/-/commits/{branch}",
         color=0xFC6D26,
         timestamp=datetime.now(timezone.utc),
     )
     em.set_author(name=pusher, url=f"{base_url}/{pusher}", icon_url=author_avatar)
+
     lines = []
-    for c in commits[:5]:
-        sha = (c.get("id") or "")[:7]
-        msg = _trunc((c.get("message") or "").splitlines()[0], 72)
-        url = c.get("url", "")
-        lines.append(f"[`{sha}`]({url}) {msg}")
-    if len(commits) > 5:
-        lines.append(f"…and {len(commits) - 5} more")
+    for c in commits[:6]:
+        lines.append(_fmt_gl_commit_line(c))
+    if len(commits) > 6:
+        lines.append(f"…and {len(commits) - 6} more")
     em.description = "\n".join(lines)
+
+    # Head commit detail
+    head = commits[-1] if commits else None
+    if head:
+        head_sha = (head.get("id") or "")[:7]
+        head_url = head.get("url") or head.get("web_url", "")
+        head_author = head.get("author") or {}
+        head_msg = _trunc(head.get("message") or "", 200)
+        detail_parts = [f"[`{head_sha}`]({head_url})"]
+        author_name = head_author.get("name") or head.get("author_name") or ""
+        author_email = head_author.get("email") or head.get("author_email") or ""
+        if author_name:
+            detail_parts.append(f"**Author:** {author_name}" + (f" <{author_email}>" if author_email else ""))
+        if head.get("timestamp"):
+            detail_parts.append(f"**Date:** {_ts(head['timestamp'])}")
+        added_f = head.get("added") or []
+        removed_f = head.get("removed") or []
+        modified_f = head.get("modified") or []
+        file_parts = []
+        if added_f:
+            file_parts.append(f"`+{len(added_f)}` added")
+        if removed_f:
+            file_parts.append(f"`-{len(removed_f)}` removed")
+        if modified_f:
+            file_parts.append(f"`~{len(modified_f)}` modified")
+        if file_parts:
+            detail_parts.append("**Files:** " + "  ".join(file_parts))
+        if head_msg:
+            detail_parts.append(f"```\n{head_msg[:300]}\n```")
+        em.add_field(name="Head Commit", value="\n".join(detail_parts), inline=False)
+
+    if before and after and before != "0000000":
+        compare_url = f"{project_url}/-/compare/{before}...{after}"
+        em.add_field(name="Compare", value=f"[`{before}...{after}`]({compare_url})", inline=True)
+
     em.set_footer(text=f"{project}  •  {len(commits)} commit(s)")
     return em
 
@@ -602,44 +659,81 @@ class GitLabCog(commands.Cog, name="GitLab"):
             ref = push_data.get("ref") or ""
             commit_title = push_data.get("commit_title") or ""
             commit_to = push_data.get("commit_to") or ""
+            commit_from = push_data.get("commit_from") or ""
             author = event.get("author") or {}
             pusher = author.get("username") or author.get("name") or "someone"
+            pusher_avatar = author.get("avatar_url")
             project_url = f"{self._base_url}/{project}"
-            
+
             # Fetch detailed commit information for the push
             commits = await self._fetch_commit_details_for_push(project, commit_to, commits_count)
-            
+
             em = discord.Embed(
                 title=f"📦 Push to `{project}` on `{ref}`",
                 url=f"{project_url}/-/commits/{ref}",
                 color=GITLAB_COLOR,
                 timestamp=datetime.now(timezone.utc),
             )
-            em.set_author(name=pusher)
-            
-            # Display commit details
+            em.set_author(name=pusher, url=f"{self._base_url}/{pusher}", icon_url=pusher_avatar)
+
             if commits:
                 lines = []
-                for commit in commits[:5]:  # Show up to 5 commits
-                    sha = commit.get("id", "")[:7]
-                    message = commit.get("message", "")
-                    first_line = message.splitlines()[0] if message else "No message"
-                    url = commit.get("web_url", "")
-                    lines.append(f"[`{sha}`]({url}) {_trunc(first_line, 72)}")
-                
-                if len(commits) > 5:
-                    lines.append(f"…and {len(commits) - 5} more")
-                
+                for commit in commits[:6]:
+                    lines.append(_fmt_gl_commit_line(commit))
+                if len(commits) > 6:
+                    lines.append(f"…and {len(commits) - 6} more")
                 em.description = "\n".join(lines)
+
+                # Head commit detail field (most recent)
+                head = commits[0]
+                head_sha = (head.get("id") or "")[:7]
+                head_url = head.get("web_url") or head.get("url") or f"{project_url}/-/commit/{head.get('id', '')}"
+                head_author_obj = head.get("author") or {}
+                head_author_name = head_author_obj.get("name") or head.get("author_name") or ""
+                head_author_email = head_author_obj.get("email") or head.get("author_email") or ""
+                committer_name = head.get("committer_name") or ""
+                head_msg = _trunc(head.get("message") or "", 200)
+                detail_parts = [f"[`{head_sha}`]({head_url})"]
+                if head_author_name:
+                    detail_parts.append(f"**Author:** {head_author_name}" + (f" <{head_author_email}>" if head_author_email else ""))
+                if committer_name and committer_name != head_author_name:
+                    detail_parts.append(f"**Committer:** {committer_name}")
+                if head.get("authored_date") or head.get("created_at"):
+                    detail_parts.append(f"**Date:** {_ts(head.get('authored_date') or head.get('created_at'))}")
+                stats_parts = []
+                added_f = head.get("added") or []
+                removed_f = head.get("removed") or []
+                modified_f = head.get("modified") or []
+                if added_f:
+                    stats_parts.append(f"`+{len(added_f)}` added")
+                if removed_f:
+                    stats_parts.append(f"`-{len(removed_f)}` removed")
+                if modified_f:
+                    stats_parts.append(f"`~{len(modified_f)}` modified")
+                if stats_parts:
+                    detail_parts.append("**Files:** " + "  ".join(stats_parts))
+                if head_msg:
+                    detail_parts.append(f"```\n{head_msg[:300]}\n```")
+                em.add_field(name="Head Commit", value="\n".join(detail_parts), inline=False)
             else:
-                # Fallback to basic info if commit fetch failed
+                # Fallback to event-level data
                 sha = commit_to[:7] if commit_to else ""
-                em.description = f"[`{sha}`]({project_url}/-/commit/{commit_to}) {_trunc(commit_title, 72)}" if sha else _trunc(commit_title, 120)
-            
+                if sha:
+                    em.description = f"[`{sha}`]({project_url}/-/commit/{commit_to}) {_trunc(commit_title, 72)}"
+                else:
+                    em.description = _trunc(commit_title, 120)
+
+            # Compare field
+            if commit_from and commit_to and commit_from != "0" * 40:
+                before_short = commit_from[:7]
+                after_short = commit_to[:7]
+                compare_url = f"{project_url}/-/compare/{commit_from}...{commit_to}"
+                em.add_field(name="Compare", value=f"[`{before_short}...{after_short}`]({compare_url})", inline=True)
+
             em.set_footer(text=f"{project}  •  {commits_count} commit(s)")
             embed = em
             event_key = "push"
-            
+
             # Generate embeddings for all commits
             if commits:
                 await _generate_commit_embeddings(self, project, commits, ref, pusher, self._base_url)

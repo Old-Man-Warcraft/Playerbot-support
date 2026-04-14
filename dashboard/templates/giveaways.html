@@ -144,6 +144,7 @@
               <th class="px-4 py-3 font-medium">Status</th>
               <th class="px-4 py-3 font-medium">Prize</th>
               <th class="px-4 py-3 font-medium">Winners</th>
+              <th class="px-4 py-3 font-medium">Recorded</th>
               <th class="px-4 py-3 font-medium">Entries</th>
               <th class="px-4 py-3 font-medium">Starts</th>
               <th class="px-4 py-3 font-medium">Ends</th>
@@ -164,6 +165,16 @@
               </td>
               <td class="px-4 py-3 text-gray-200 font-medium max-w-[180px] truncate" title="{{ g.prize }}">{{ g.prize }}</td>
               <td class="px-4 py-3 text-gray-400 text-center">{{ g.winner_count }}</td>
+              <td class="px-4 py-3 text-gray-400 text-xs font-mono max-w-[200px]">
+                {% set wids = winner_lists.get(g.id, []) %}
+                {% if g.status == 'ended' %}
+                  {% if wids %}
+                    {{ wids | join(', ') }}
+                  {% else %}
+                    <span class="text-gray-600" title="Not stored (older giveaway, none drawn, or cancelled)">—</span>
+                  {% endif %}
+                {% else %}—{% endif %}
+              </td>
               <td class="px-4 py-3 text-gray-400 text-center">{{ entry_counts.get(g.id, 0) }}</td>
               <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ g.start_time[:16] if g.start_time else "—" }} <span class="text-gray-600">UTC</span></td>
               <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ g.end_time[:16] if g.end_time else "—" }} <span class="text-gray-600">UTC</span></td>
@@ -196,6 +207,14 @@
                       <i class="fa fa-dice"></i> Reroll
                     </button>
                   </form>
+                  <form method="post" action="/giveaways/announce" class="inline"
+                        title="Post winner line in the giveaway channel again">
+                    <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                    <input type="hidden" name="giveaway_id" value="{{ g.id }}"/>
+                    <button type="submit" class="btn-secondary text-xs">
+                      <i class="fa fa-bullhorn"></i> Post winners
+                    </button>
+                  </form>
                   {% endif %}
                 </div>
               </td>
@@ -203,7 +222,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="{% if guild_id %}9{% else %}8{% endif %}" class="px-4 py-12 text-center text-gray-500">
+              <td colspan="{% if guild_id %}10{% else %}9{% endif %}" class="px-4 py-12 text-center text-gray-500">
                 <i class="fa fa-gift text-2xl mb-2 block opacity-30"></i>
                 No giveaways found
               </td>
