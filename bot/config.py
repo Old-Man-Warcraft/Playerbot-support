@@ -57,6 +57,10 @@ class Config:
     )
 
     # ── Lavalink (wavelink 3 / music playback) ───────────────────────
+    # Set LAVALINK_URI in .env to opt-in; if absent the VoiceMusicCog is skipped.
+    lavalink_enabled: bool = field(
+        default_factory=lambda: bool(os.getenv("LAVALINK_URI", "").strip())
+    )
     lavalink_uri: str = field(
         default_factory=lambda: os.getenv("LAVALINK_URI", "http://localhost:2333")
     )

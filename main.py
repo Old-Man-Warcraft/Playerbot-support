@@ -142,7 +142,10 @@ async def main() -> None:
     await bot.add_cog(EconomyCog(bot, db))
     await bot.add_cog(ReportsCog(bot, db))
     await bot.add_cog(UtilityCog(bot))
-    await bot.add_cog(VoiceMusicCog(bot, db, config))
+    if config.lavalink_enabled:
+        await bot.add_cog(VoiceMusicCog(bot, db, config))
+    else:
+        logger.info("LAVALINK_URI not set — VoiceMusicCog skipped")
     await bot.add_cog(SupportCog(bot, db, llm, qdrant, mcp_manager))
     await bot.add_cog(MCPCog(bot, db, mcp_manager))
     await bot.add_cog(LevelsCog(bot, db))
