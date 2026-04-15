@@ -506,8 +506,6 @@ def _strip_markdown_code_fence(text: str) -> str:
 def _text_looks_like_create_embed_json(text: str) -> bool:
     """Models sometimes emit OpenAI-style tool JSON in message content instead of tool_calls."""
     s = text.strip().lower()
-    if not s.startswith("{") and not s.startswith("```"):
-        return False
     return "create_embed" in s and ("arguments" in s or '"name"' in s or "'name'" in s)
 
 
@@ -517,7 +515,18 @@ def _parse_create_embed_dict_from_serialized_tool(text: str) -> dict[str, Any] |
     try:
         data = json.loads(s)
     except json.JSONDecodeError:
-        return None
+        # The JSON may be embedded inside prose (e.g. "We will call create_embed. {...}").
+        # Try to extract the first {...} block that contains "create_embed".
+        import re as _re
+        match = _re.search(r'\{.*"create_embed".*\}', s, _re.DOTALL)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
     if not isinstance(data, dict):
         return None
     name = data.get("name")

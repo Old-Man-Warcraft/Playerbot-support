@@ -56,6 +56,22 @@ class Config:
         default_factory=lambda: os.getenv("SYSTEM_PROMPT", "")
     )
 
+    # ── Lavalink (wavelink 3 / music playback) ───────────────────────
+    lavalink_uri: str = field(
+        default_factory=lambda: os.getenv("LAVALINK_URI", "http://localhost:2333")
+    )
+    lavalink_password: str = field(
+        default_factory=lambda: os.getenv("LAVALINK_PASSWORD", "youshallnotpass")
+    )
+
+    # ── Spotify (LavaSrc plugin — metadata only, audio via YouTube) ──
+    spotify_client_id: str | None = field(
+        default_factory=lambda: os.getenv("SPOTIFY_CLIENT_ID")
+    )
+    spotify_client_secret: str | None = field(
+        default_factory=lambda: os.getenv("SPOTIFY_CLIENT_SECRET")
+    )
+
     # ── GitHub integration ───────────────────────────────────────────
     github_token: str | None = field(
         default_factory=lambda: os.getenv("GITHUB_TOKEN")
