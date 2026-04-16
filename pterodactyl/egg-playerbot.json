@@ -1,0 +1,213 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-04-15T20:00:00+00:00",
+    "uuid": "2fde783f-5102-45cd-a0f5-927cbfeedd48",
+    "author": "admin@playerbot",
+    "name": "Playerbot Support",
+    "description": "Discord support bot with built-in Lavalink v4 music server. Runs Java 21 (Lavalink) and Python 3.12 in a single container.",
+    "features": ["eula"],
+    "docker_images": {
+        "Java 21 + Python 3 (recommended)": "ghcr.io/parkervcp/yolks:java_21"
+    },
+    "file_denylist": [],
+    "startup": "bash /home/container/startup.sh",
+    "config": {
+        "files": "{}",
+        "startup": "{\"done\": \"Bot is ready\"}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\r\nset -e\r\napt-get update -y\r\napt-get install -y curl wget git python3 python3-pip python3-venv\r\n\r\nINSTALL_DIR=\"/mnt/user-data/volumes/${P_SERVER_UUID}\"\r\nREPO=\"${GITHUB_REPO:-https://github.com/scarecr0w12/Playerbot-support.git}\"\r\nBRANCH=\"${GITHUB_BRANCH:-main}\"\r\n\r\n# ── Clone / update bot source ─────────────────────────────────────────────────\r\nif [ -d \"${INSTALL_DIR}/.git\" ]; then\r\n    echo \"Updating existing repository...\"\r\n    git -C \"${INSTALL_DIR}\" fetch origin\r\n    git -C \"${INSTALL_DIR}\" reset --hard \"origin/${BRANCH}\"\r\nelse\r\n    echo \"Cloning ${REPO} (branch: ${BRANCH})...\"\r\n    git clone --depth=1 --branch \"${BRANCH}\" \"${REPO}\" \"${INSTALL_DIR}\"\r\nfi\r\n\r\n# ── Python deps ───────────────────────────────────────────────────────────────\r\ncd \"${INSTALL_DIR}\"\r\nif [ -f requirements.txt ]; then\r\n    echo \"Installing Python dependencies...\"\r\n    pip3 install --no-cache-dir -r requirements.txt\r\nfi\r\n\r\n# ── Lavalink ──────────────────────────────────────────────────────────────────\r\nmkdir -p \"${INSTALL_DIR}/lavalink\"\r\ncd \"${INSTALL_DIR}/lavalink\"\r\n\r\nLAVALINK_VERSION=\"${LAVALINK_VERSION:-4.0.8}\"\r\nJAR_URL=\"https://github.com/lavalink-devs/Lavalink/releases/download/${LAVALINK_VERSION}/Lavalink.jar\"\r\necho \"Downloading Lavalink ${LAVALINK_VERSION}...\"\r\nwget -q -O Lavalink.jar \"${JAR_URL}\"\r\necho \"Lavalink.jar downloaded.\"\r\n\r\n# application.yml ships in the repo under lavalink/ — only write a fallback\r\n# if the clone somehow didn't include it\r\nif [ ! -f application.yml ]; then\r\n    echo \"WARNING: lavalink/application.yml not found in repo — writing default.\"\r\n    cat > application.yml << 'LAVACONF'\r\nserver:\r\n  port: 2333\r\n  address: 0.0.0.0\r\n\r\nplugins:\r\n  youtube:\r\n    enabled: true\r\n    allowSearch: true\r\n    allowDirectVideoIds: true\r\n    allowDirectPlaylistIds: true\r\n    clients:\r\n      - MUSIC\r\n      - ANDROID_TESTSUITE\r\n      - WEB\r\n      - TVHTML5EMBEDDED\r\n  lavasrc:\r\n    providers:\r\n      - \"ytsearch:\\\"%ISRC%\\\"\"\r\n      - \"ytsearch:%QUERY%\"\r\n      - \"scsearch:%QUERY%\"\r\n    sources:\r\n      spotify: true\r\n      applemusic: false\r\n      deezer: false\r\n      yandexmusic: false\r\n      youtube: true\r\n    lyrics-sources:\r\n      spotify: false\r\n      deezer: false\r\n      youtube: true\r\n      yandexmusic: false\r\n    spotify:\r\n      clientId: \"${SPOTIFY_CLIENT_ID:}\"\r\n      clientSecret: \"${SPOTIFY_CLIENT_SECRET:}\"\r\n      countryCode: \"US\"\r\n      playlistLoadLimit: 6\r\n      albumLoadLimit: 6\r\n\r\nlavalink:\r\n  plugins:\r\n    - dependency: \"dev.lavalink.youtube:youtube-plugin:1.11.4\"\r\n      snapshot: false\r\n    - dependency: \"com.github.topi314.lavasrc:lavasrc-plugin:4.4.1\"\r\n      repository: \"https://maven.lavalink.dev/releases\"\r\n      snapshot: false\r\n  server:\r\n    password: \"${LAVALINK_PASSWORD:youshallnotpass}\"\r\n    sources:\r\n      youtube: false\r\n      bandcamp: true\r\n      soundcloud: true\r\n      twitch: true\r\n      vimeo: true\r\n      http: true\r\n      local: false\r\n    filters:\r\n      volume: true\r\n      equalizer: true\r\n      karaoke: true\r\n      timescale: true\r\n      tremolo: true\r\n      vibrato: true\r\n      distortion: true\r\n      rotation: true\r\n      channelMix: true\r\n      lowPass: true\r\nLAVACONF\r\nfi\r\n\r\necho \"Installation complete.\"",
+            "container": "ghcr.io/parkervcp/yolks:java_21",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "GitHub Repository",
+            "description": "Full HTTPS URL of the GitHub repository to clone.",
+            "env_variable": "GITHUB_REPO",
+            "default_value": "https://github.com/scarecr0w12/Playerbot-support.git",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:300",
+            "field_type": "text"
+        },
+        {
+            "name": "GitHub Branch",
+            "description": "Branch to clone from the repository.",
+            "env_variable": "GITHUB_BRANCH",
+            "default_value": "main",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Discord Bot Token",
+            "description": "Your Discord bot token from the developer portal.",
+            "env_variable": "DISCORD_BOT_TOKEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "LLM Base URL",
+            "description": "OpenAI-compatible API base URL (e.g. https://api.openai.com/v1).",
+            "env_variable": "LLM_BASE_URL",
+            "default_value": "https://api.openai.com/v1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "LLM API Key",
+            "description": "API key for the LLM provider.",
+            "env_variable": "LLM_API_KEY",
+            "default_value": "no-key-needed",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Dashboard Port",
+            "description": "Port the web dashboard runs on.",
+            "env_variable": "DASHBOARD_PORT",
+            "default_value": "8080",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|between:1024,65535",
+            "field_type": "text"
+        },
+        {
+            "name": "Qdrant URL",
+            "description": "URL of your Qdrant vector database instance.",
+            "env_variable": "QDRANT_URL",
+            "default_value": "http://localhost:6333",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Lavalink Password",
+            "description": "Password for the Lavalink server (must match application.yml).",
+            "env_variable": "LAVALINK_PASSWORD",
+            "default_value": "youshallnotpass",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|between:4,100",
+            "field_type": "text"
+        },
+        {
+            "name": "Lavalink URI",
+            "description": "URI the Python bot uses to connect to Lavalink. Use http://127.0.0.1:2333 when running in the same container.",
+            "env_variable": "LAVALINK_URI",
+            "default_value": "http://127.0.0.1:2333",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Lavalink Port",
+            "description": "Port Lavalink listens on inside the container.",
+            "env_variable": "LAVALINK_PORT",
+            "default_value": "2333",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|between:1024,65535",
+            "field_type": "text"
+        },
+        {
+            "name": "Lavalink Memory (MB)",
+            "description": "Max heap memory allocated to the Lavalink JVM.",
+            "env_variable": "LAVALINK_MEMORY",
+            "default_value": "512",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|between:256,8192",
+            "field_type": "text"
+        },
+        {
+            "name": "Lavalink Version",
+            "description": "Lavalink release version to download during installation.",
+            "env_variable": "LAVALINK_VERSION",
+            "default_value": "4.0.8",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Spotify Client ID",
+            "description": "Spotify Web API client ID for LavaSrc (optional).",
+            "env_variable": "SPOTIFY_CLIENT_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Spotify Client Secret",
+            "description": "Spotify Web API client secret for LavaSrc (optional).",
+            "env_variable": "SPOTIFY_CLIENT_SECRET",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Discord OAuth Client ID",
+            "description": "Discord OAuth2 client ID for the dashboard.",
+            "env_variable": "DISCORD_CLIENT_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Discord OAuth Client Secret",
+            "description": "Discord OAuth2 client secret for the dashboard.",
+            "env_variable": "DISCORD_CLIENT_SECRET",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Discord OAuth Redirect URI",
+            "description": "Full redirect URI registered in your Discord OAuth2 app (e.g. http://your-ip:8080/auth/discord/callback).",
+            "env_variable": "DISCORD_REDIRECT_URI",
+            "default_value": "http://localhost:8080/auth/discord/callback",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:300",
+            "field_type": "text"
+        },
+        {
+            "name": "Bot Owner Discord ID",
+            "description": "Discord user ID with master dashboard access across all guilds.",
+            "env_variable": "BOT_OWNER_DISCORD_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:30",
+            "field_type": "text"
+        }
+    ]
+}
