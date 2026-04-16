@@ -252,6 +252,98 @@
     /* ── Collapse toggle ── */
     #sidebar-toggle { transition: transform 0.22s ease; }
     #sidebar.collapsed #sidebar-toggle { transform: rotate(180deg); }
+
+    /* ── Collapsed sidebar tooltips (CSS-only, shown on hover) ── */
+    #sidebar.collapsed .sidebar-link { position: relative; }
+    #sidebar.collapsed .sidebar-link::after {
+      content: attr(data-tip);
+      position: absolute; left: calc(100% + 10px); top: 50%;
+      transform: translateY(-50%) translateX(-4px);
+      background: #0f1a2e; color: #e5eefc;
+      border: 1px solid rgba(148,163,184,0.18);
+      border-radius: 0.4rem; padding: 0.28rem 0.55rem;
+      font-size: 0.72rem; font-weight: 500; white-space: nowrap;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.12s ease, transform 0.12s ease;
+      z-index: 60;
+    }
+    #sidebar.collapsed .sidebar-link:hover::after {
+      opacity: 1; transform: translateY(-50%) translateX(0);
+    }
+    @media (max-width: 767px) {
+      #sidebar.collapsed .sidebar-link::after { display: none; }
+    }
+
+    /* ── Global guild picker dropdown ── */
+    #guild-picker-button {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.36rem 0.7rem; border-radius: 0.55rem;
+      background: rgba(26, 37, 55, 0.7); color: #cbd8f0;
+      border: 1px solid rgba(148,163,184,0.16);
+      font-size: 0.76rem; font-weight: 500; cursor: pointer;
+      transition: background 0.14s ease, border-color 0.14s ease;
+      max-width: 180px; min-width: 0;
+    }
+    #guild-picker-button:hover { background: rgba(40, 55, 80, 0.9); border-color: rgba(148,163,184,0.28); }
+    #guild-picker-button .gp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #guild-picker-menu {
+      position: absolute; right: 0; top: calc(100% + 6px);
+      min-width: 260px; max-width: 320px; max-height: 60vh; overflow-y: auto;
+      background: linear-gradient(180deg,#111e33,#0c1728);
+      border: 1px solid rgba(148,163,184,0.18); border-radius: 0.7rem;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.55);
+      padding: 0.35rem; z-index: 50; display: none;
+    }
+    #guild-picker-menu.open { display: block; }
+    .gp-item {
+      display: flex; align-items: center; gap: 0.55rem;
+      padding: 0.45rem 0.55rem; border-radius: 0.45rem;
+      color: #cbd8f0; text-decoration: none; font-size: 0.8rem;
+      transition: background 0.12s ease;
+    }
+    .gp-item:hover { background: rgba(88,101,242,0.12); color: #fff; }
+    .gp-item.active { background: rgba(88,101,242,0.18); color: #fff; }
+    .gp-item .gp-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; color: #3d5272; }
+
+    /* ── Command palette ── */
+    #cmdk-overlay {
+      position: fixed; inset: 0; background: rgba(4,10,20,0.62);
+      backdrop-filter: blur(4px); z-index: 9990;
+      display: none; align-items: flex-start; justify-content: center;
+      padding-top: min(14vh, 120px);
+    }
+    #cmdk-overlay.open { display: flex; animation: toast-in 0.14s ease; }
+    #cmdk-panel {
+      width: min(560px, 92vw);
+      background: linear-gradient(180deg,#111e33,#0c1728);
+      border: 1px solid rgba(148,163,184,0.2); border-radius: 0.9rem;
+      box-shadow: 0 28px 70px rgba(0,0,0,0.65);
+      overflow: hidden; display: flex; flex-direction: column; max-height: 70vh;
+    }
+    #cmdk-input {
+      width: 100%; background: transparent; color: #e5eefc;
+      border: none; outline: none; padding: 1rem 1.1rem;
+      font-size: 0.95rem; border-bottom: 1px solid rgba(148,163,184,0.1);
+    }
+    #cmdk-input::placeholder { color: #4a607e; }
+    #cmdk-results { overflow-y: auto; padding: 0.35rem; }
+    .cmdk-item {
+      display: flex; align-items: center; gap: 0.7rem;
+      padding: 0.55rem 0.7rem; border-radius: 0.5rem;
+      color: #cbd8f0; text-decoration: none; font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .cmdk-item i.lead { width: 1rem; text-align: center; color: #7ea8ff; font-size: 0.78rem; }
+    .cmdk-item .cmdk-sub { color: #4d6485; font-size: 0.7rem; margin-left: auto; }
+    .cmdk-item:hover, .cmdk-item.cmdk-selected { background: rgba(88,101,242,0.14); color: #fff; }
+    .cmdk-empty { padding: 1.5rem 1rem; text-align: center; color: #4d6485; font-size: 0.8rem; }
+    .cmdk-hint {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.2rem 0.45rem; border-radius: 0.35rem;
+      background: rgba(79,124,255,0.09); border: 1px solid rgba(79,124,255,0.22);
+      color: #a5bfff; font-size: 0.65rem; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
   </style>
   {% block head_extra %}{% endblock %}
 </head>
@@ -287,93 +379,102 @@
 
     <!-- Main -->
     <div class="nav-section-label mt-1 mb-1">Main</div>
-    <a href="/" class="sidebar-link {% if active_page == 'overview' %}active{% endif %}">
+    <a href="/" data-tip="Overview" class="sidebar-link {% if active_page == 'overview' %}active{% endif %}">
       <i class="fa fa-gauge-high"></i><span class="sidebar-label">Overview</span>
     </a>
-    <a href="/config" class="sidebar-link {% if active_page == 'config' %}active{% endif %}">
+    <a href="/config" data-tip="Guild Config" class="sidebar-link {% if active_page == 'config' %}active{% endif %}">
       <i class="fa fa-sliders"></i><span class="sidebar-label">Guild Config</span>
     </a>
-    <a href="/assistant" class="sidebar-link {% if active_page == 'assistant' %}active{% endif %}">
+    <a href="/assistant" data-tip="Assistant" class="sidebar-link {% if active_page == 'assistant' %}active{% endif %}">
       <i class="fa fa-robot"></i><span class="sidebar-label">Assistant</span>
     </a>
 
     <!-- Moderation -->
     <div class="nav-section-label mt-3 mb-1">Moderation</div>
-    <a href="/moderation" class="sidebar-link {% if active_page == 'moderation' %}active{% endif %}">
+    <a href="/moderation" data-tip="Mod Cases" class="sidebar-link {% if active_page == 'moderation' %}active{% endif %}">
       <i class="fa fa-gavel"></i><span class="sidebar-label">Mod Cases</span>
     </a>
-    <a href="/warnings" class="sidebar-link {% if active_page == 'warnings' %}active{% endif %}">
+    <a href="/warnings" data-tip="Warnings" class="sidebar-link {% if active_page == 'warnings' %}active{% endif %}">
       <i class="fa fa-triangle-exclamation"></i><span class="sidebar-label">Warnings</span>
     </a>
-    <a href="/reports" class="sidebar-link {% if active_page == 'reports' %}active{% endif %}">
+    <a href="/reports" data-tip="Reports" class="sidebar-link {% if active_page == 'reports' %}active{% endif %}">
       <i class="fa fa-flag"></i><span class="sidebar-label">Reports</span>
     </a>
-    <a href="/automod" class="sidebar-link {% if active_page == 'automod' %}active{% endif %}">
+    <a href="/automod" data-tip="Auto-Mod" class="sidebar-link {% if active_page == 'automod' %}active{% endif %}">
       <i class="fa fa-shield-halved"></i><span class="sidebar-label">Auto-Mod</span>
     </a>
 
     <!-- Support -->
     <div class="nav-section-label mt-3 mb-1">Support</div>
-    <a href="/tickets" class="sidebar-link {% if active_page == 'tickets' %}active{% endif %}">
+    <a href="/tickets" data-tip="Tickets" class="sidebar-link {% if active_page == 'tickets' %}active{% endif %}">
       <i class="fa fa-ticket"></i><span class="sidebar-label">Tickets</span>
     </a>
-    <a href="/community" class="sidebar-link {% if active_page == 'community' %}active{% endif %}">
+    <a href="/community" data-tip="Community" class="sidebar-link {% if active_page == 'community' %}active{% endif %}">
       <i class="fa fa-users"></i><span class="sidebar-label">Community</span>
     </a>
-    <a href="/welcome" class="sidebar-link {% if active_page == 'welcome' %}active{% endif %}">
+    <a href="/welcome" data-tip="Welcome" class="sidebar-link {% if active_page == 'welcome' %}active{% endif %}">
       <i class="fa fa-door-open"></i><span class="sidebar-label">Welcome</span>
     </a>
 
     <!-- Features -->
     <div class="nav-section-label mt-3 mb-1">Features</div>
-    <a href="/economy" class="sidebar-link {% if active_page == 'economy' %}active{% endif %}">
+    <a href="/economy" data-tip="Economy" class="sidebar-link {% if active_page == 'economy' %}active{% endif %}">
       <i class="fa fa-coins"></i><span class="sidebar-label">Economy</span>
     </a>
-    <a href="/levels" class="sidebar-link {% if active_page == 'levels' %}active{% endif %}">
+    <a href="/levels" data-tip="Levels & XP" class="sidebar-link {% if active_page == 'levels' %}active{% endif %}">
       <i class="fa fa-chart-line"></i><span class="sidebar-label">Levels &amp; XP</span>
     </a>
-    <a href="/giveaways" class="sidebar-link {% if active_page == 'giveaways' %}active{% endif %}">
+    <a href="/giveaways" data-tip="Giveaways" class="sidebar-link {% if active_page == 'giveaways' %}active{% endif %}">
       <i class="fa fa-gift"></i><span class="sidebar-label">Giveaways</span>
     </a>
-    <a href="/polls" class="sidebar-link {% if active_page == 'polls' %}active{% endif %}">
+    <a href="/polls" data-tip="Polls" class="sidebar-link {% if active_page == 'polls' %}active{% endif %}">
       <i class="fa fa-square-poll-vertical"></i><span class="sidebar-label">Polls</span>
     </a>
-    <a href="/reminders" class="sidebar-link {% if active_page == 'reminders' %}active{% endif %}">
+    <a href="/reminders" data-tip="Reminders" class="sidebar-link {% if active_page == 'reminders' %}active{% endif %}">
       <i class="fa fa-bell"></i><span class="sidebar-label">Reminders</span>
     </a>
-    <a href="/voice-music" class="sidebar-link {% if active_page == 'voice_music' %}active{% endif %}">
+    <a href="/voice-music" data-tip="Voice & Music" class="sidebar-link {% if active_page == 'voice_music' %}active{% endif %}">
       <i class="fa fa-headphones"></i><span class="sidebar-label">Voice &amp; Music</span>
     </a>
-    <a href="/custom-commands" class="sidebar-link {% if active_page == 'custom_commands' %}active{% endif %}">
+    <a href="/custom-commands" data-tip="Custom Commands" class="sidebar-link {% if active_page == 'custom_commands' %}active{% endif %}">
       <i class="fa fa-terminal"></i><span class="sidebar-label">Custom Commands</span>
     </a>
-    <a href="/permissions" class="sidebar-link {% if active_page == 'permissions' %}active{% endif %}">
+    <a href="/permissions" data-tip="Permissions" class="sidebar-link {% if active_page == 'permissions' %}active{% endif %}">
       <i class="fa fa-lock"></i><span class="sidebar-label">Permissions</span>
     </a>
 
     <!-- Integrations -->
     <div class="nav-section-label mt-3 mb-1">Integrations</div>
-    <a href="/integrations" class="sidebar-link {% if active_page == 'integrations' and active_subpage != 'gitlab' %}active{% endif %}">
+    <a href="/integrations" data-tip="GitHub" class="sidebar-link {% if active_page == 'integrations' and active_subpage != 'gitlab' %}active{% endif %}">
       <i class="fa-brands fa-github"></i><span class="sidebar-label">GitHub</span>
     </a>
-    <a href="/integrations/gitlab" class="sidebar-link {% if active_subpage == 'gitlab' %}active{% endif %}">
+    <a href="/integrations/gitlab" data-tip="GitLab" class="sidebar-link {% if active_subpage == 'gitlab' %}active{% endif %}">
       <i class="fa-brands fa-gitlab"></i><span class="sidebar-label">GitLab</span>
     </a>
 
     <!-- AI / Knowledge -->
     <div class="nav-section-label mt-3 mb-1">AI &amp; Knowledge</div>
-    <a href="/knowledge" class="sidebar-link {% if active_page == 'knowledge' and not active_tab %}active{% endif %}">
+    <a href="/knowledge" data-tip="Knowledge Base" class="sidebar-link {% if active_page == 'knowledge' and not active_tab %}active{% endif %}">
       <i class="fa fa-brain"></i><span class="sidebar-label">Knowledge Base</span>
     </a>
-    <a href="/knowledge?tab=crawl" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'crawl' %}active{% endif %}">
+    <a href="/knowledge?tab=crawl" data-tip="Web Crawler" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'crawl' %}active{% endif %}">
       <i class="fa fa-spider"></i><span class="sidebar-label">Web Crawler</span>
     </a>
-    <a href="/knowledge?tab=training" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'training' %}active{% endif %}">
+    <a href="/knowledge?tab=training" data-tip="Training" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'training' %}active{% endif %}">
       <i class="fa fa-graduation-cap"></i><span class="sidebar-label">Training</span>
     </a>
-    <a href="/knowledge?tab=feedback" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'feedback' %}active{% endif %}">
+    <a href="/knowledge?tab=feedback" data-tip="Feedback" class="sidebar-link {% if active_page == 'knowledge' and active_tab == 'feedback' %}active{% endif %}">
       <i class="fa fa-star"></i><span class="sidebar-label">Feedback</span>
     </a>
+
+    <!-- Quick search -->
+    <div class="nav-section-label mt-3 mb-1">Quick</div>
+    <button type="button" onclick="openCmdK()" data-tip="Quick search (Ctrl+K)" class="sidebar-link w-full text-left" style="background:transparent;border:0;cursor:pointer;">
+      <i class="fa fa-magnifying-glass"></i>
+      <span class="sidebar-label flex items-center gap-2">Search
+        <span class="kbd-pill ml-auto" style="padding:0.08rem 0.38rem;font-size:0.6rem;">Ctrl K</span>
+      </span>
+    </button>
   </nav>
 
   <!-- Footer -->
@@ -416,7 +517,45 @@
       <span id="live-badge" class="hidden badge bg-green-500/15 text-green-400 border border-green-500/25 text-[0.7rem]">
         <span class="w-1.5 h-1.5 rounded-full bg-green-400 mr-1.5 animate-pulse inline-block"></span> Live
       </span>
-      <span class="text-[0.72rem] text-[#3d5272] hidden sm:block select-none">{{ now }}</span>
+      {# Global guild picker — shown when the current page exposes `guilds` #}
+      {% if guilds is defined and guilds %}
+      <div class="relative" id="guild-picker-wrap">
+        {% set _active_guild = namespace(name=None, id=None) %}
+        {% for g in guilds %}
+          {% if guild_id is defined and guild_id and guild_id|string == g.guild_id|string %}
+            {% set _active_guild.name = g.guild_name or ('Guild ' ~ g.guild_id) %}
+            {% set _active_guild.id = g.guild_id %}
+          {% endif %}
+        {% endfor %}
+        <button type="button" id="guild-picker-button" onclick="toggleGuildPicker(event)" aria-haspopup="listbox" aria-expanded="false" title="Switch guild">
+          <i class="fa fa-server text-[0.7rem] text-[#7ea8ff]"></i>
+          <span class="gp-name">
+            {%- if _active_guild.name -%}{{ _active_guild.name }}{%- else -%}All guilds{%- endif -%}
+          </span>
+          <i class="fa fa-chevron-down text-[0.55rem] opacity-60"></i>
+        </button>
+        <div id="guild-picker-menu" role="listbox">
+          <a href="{{ request.url.path }}" class="gp-item {% if not _active_guild.id %}active{% endif %}">
+            <i class="fa fa-globe text-[0.7rem] text-[#5a7aaa]"></i>
+            <span>All guilds</span>
+          </a>
+          <div class="my-1 border-t border-[rgba(148,163,184,0.1)]"></div>
+          {% for g in guilds %}
+          <a href="{{ request.url.path }}?guild_id={{ g.guild_id }}"
+             class="gp-item {% if _active_guild.id and _active_guild.id|string == g.guild_id|string %}active{% endif %}">
+            <i class="fa fa-server text-[0.7rem] text-[#5a7aaa]"></i>
+            <span class="flex-1 truncate">{{ g.guild_name or ('Guild ' ~ g.guild_id) }}</span>
+            <span class="gp-id">{{ g.guild_id }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <button type="button" onclick="openCmdK()" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[0.72rem] text-[#5a7aaa] hover:text-white hover:bg-[rgba(255,255,255,0.05)] border border-[rgba(148,163,184,0.12)] hover:border-[rgba(148,163,184,0.25)] transition-all" title="Quick search (Ctrl+K)">
+        <i class="fa fa-magnifying-glass text-[0.65rem]"></i>
+        <span class="kbd-pill" style="padding:0.08rem 0.35rem;font-size:0.6rem;">Ctrl K</span>
+      </button>
+      <span class="text-[0.72rem] text-[#3d5272] hidden lg:block select-none">{{ now }}</span>
       <div class="w-px h-4 bg-[rgba(148,163,184,0.12)] hidden sm:block"></div>
       <a href="/logout" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[0.75rem] text-[#5a7aaa] hover:text-[#e5616e] hover:bg-[rgba(229,97,110,0.08)] border border-transparent hover:border-[rgba(229,97,110,0.18)] transition-all"
          title="Logout">
@@ -446,6 +585,14 @@
   <main class="flex-1 p-5 md:p-6 pl-[max(1.25rem,env(safe-area-inset-left,0px))] pr-[max(1.25rem,env(safe-area-inset-right,0px))] pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] overflow-auto">
     {% block content %}{% endblock %}
   </main>
+</div>
+
+<!-- Command palette -->
+<div id="cmdk-overlay" onclick="if(event.target===this)closeCmdK()" aria-hidden="true">
+  <div id="cmdk-panel" role="dialog" aria-modal="true" aria-label="Quick search">
+    <input id="cmdk-input" type="text" placeholder="Jump to page, run action…" autocomplete="off" spellcheck="false"/>
+    <div id="cmdk-results"></div>
+  </div>
 </div>
 
 <script src="/static/js/dashboard.js"></script>

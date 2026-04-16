@@ -1,0 +1,60 @@
+{#
+  Shared sidebar guild picker partial.
+
+  Usage:
+    {% include "_guild_picker.html" with context %}   {# uses current vars #}
+    {# or #}
+    {% with page_path="/economy", empty_label="No guilds found" %}
+      {% include "_guild_picker.html" %}
+    {% endwith %}
+
+  Expected context (all optional except `guilds`):
+    - guilds       : list of {guild_id, guild_name}
+    - guild_id     : currently selected guild id (int) or None
+    - page_path    : base path to link to (default: request.url.path)
+    - empty_label  : text shown when the list is empty
+    - show_all_guilds : if true, render an "All Guilds" entry that clears the filter
+#}
+{% set _gp_page = page_path if page_path is defined and page_path else request.url.path %}
+{% set _gp_empty = empty_label if empty_label is defined and empty_label else "No guilds found" %}
+{% set _gp_show_all = show_all_guilds if show_all_guilds is defined else false %}
+<div class="card p-4">
+  <div class="flex items-center justify-between mb-3">
+    <h3 class="text-[0.78rem] font-semibold text-[#cbd8f0] uppercase tracking-wider">Select Guild</h3>
+    {% if guilds %}
+    <span class="text-[0.65rem] text-[#3d5272] font-mono">{{ guilds|length }}</span>
+    {% endif %}
+  </div>
+  <div class="space-y-1 max-h-[60vh] overflow-y-auto -mx-1 px-1">
+    {% if _gp_show_all %}
+    {% set _gp_all_active = not (guild_id is defined and guild_id) %}
+    <a href="{{ _gp_page }}"
+       class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors {% if _gp_all_active %}bg-[#5865F2]/18 text-white border border-[#5865F2]/35{% else %}text-[#8ab0d8] hover:bg-[rgba(255,255,255,0.04)] hover:text-white border border-transparent{% endif %}"
+       style="text-decoration:none;">
+      <div class="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 {% if _gp_all_active %}bg-[#5865F2]/25{% else %}bg-[rgba(88,101,242,0.10)]{% endif %}">
+        <i class="fa fa-globe text-[0.62rem] {% if _gp_all_active %}text-[#a5b4ff]{% else %}text-[#5a7aaa]{% endif %}"></i>
+      </div>
+      <span class="flex-1 text-[0.8rem]">All Guilds</span>
+      {% if _gp_all_active %}<i class="fa fa-check text-[0.6rem] text-[#a5b4ff] flex-shrink-0"></i>{% endif %}
+    </a>
+    {% endif %}
+    {% for g in guilds %}
+    {% set _gp_active = (guild_id is defined and guild_id and guild_id|string == g.guild_id|string) %}
+    <a href="{{ _gp_page }}?guild_id={{ g.guild_id }}"
+       class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors {% if _gp_active %}bg-[#5865F2]/18 text-white border border-[#5865F2]/35 shadow-[0_2px_8px_rgba(88,101,242,0.12)]{% else %}text-[#8ab0d8] hover:bg-[rgba(255,255,255,0.04)] hover:text-white border border-transparent{% endif %}"
+       style="text-decoration:none;"
+       title="{{ g.guild_name or ('Guild ' ~ g.guild_id) }} ({{ g.guild_id }})">
+      <div class="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 {% if _gp_active %}bg-[#5865F2]/25{% else %}bg-[rgba(88,101,242,0.10)]{% endif %}">
+        <i class="fa fa-server text-[0.62rem] {% if _gp_active %}text-[#a5b4ff]{% else %}text-[#5a7aaa]{% endif %}"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="text-[0.8rem] leading-tight truncate">{{ g.guild_name or ("Guild " ~ g.guild_id) }}</p>
+        <p class="text-[0.62rem] text-[#3d5272] font-mono truncate">{{ g.guild_id }}</p>
+      </div>
+      {% if _gp_active %}<i class="fa fa-check text-[0.6rem] text-[#a5b4ff] flex-shrink-0"></i>{% endif %}
+    </a>
+    {% else %}
+    <p class="text-[#3d5272] text-xs text-center py-4">{{ _gp_empty }}</p>
+    {% endfor %}
+  </div>
+</div>

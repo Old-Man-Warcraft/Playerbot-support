@@ -65,6 +65,129 @@ window.toggleSidebar   = toggleSidebar;
 window.openMobileSidebar  = openMobileSidebar;
 window.closeMobileSidebar = closeMobileSidebar;
 
+// ── Global guild picker dropdown ────────────────────────────────────────────
+function toggleGuildPicker(event) {
+  if (event) event.stopPropagation();
+  const menu = document.getElementById('guild-picker-menu');
+  const btn  = document.getElementById('guild-picker-button');
+  if (!menu || !btn) return;
+  const open = menu.classList.toggle('open');
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function closeGuildPicker() {
+  const menu = document.getElementById('guild-picker-menu');
+  const btn  = document.getElementById('guild-picker-button');
+  if (menu) menu.classList.remove('open');
+  if (btn)  btn.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('guild-picker-wrap');
+  if (wrap && !wrap.contains(e.target)) closeGuildPicker();
+});
+window.toggleGuildPicker = toggleGuildPicker;
+window.closeGuildPicker  = closeGuildPicker;
+
+// ── Command palette (Ctrl+K / ⌘K) ───────────────────────────────────────────
+const CMDK_PAGES = [
+  { label: 'Overview',          href: '/',                 icon: 'fa-gauge-high',            group: 'Main' },
+  { label: 'Guild Config',      href: '/config',           icon: 'fa-sliders',               group: 'Main' },
+  { label: 'Assistant',         href: '/assistant',        icon: 'fa-robot',                 group: 'Main' },
+  { label: 'Mod Cases',         href: '/moderation',       icon: 'fa-gavel',                 group: 'Moderation' },
+  { label: 'Warnings',          href: '/warnings',         icon: 'fa-triangle-exclamation',  group: 'Moderation' },
+  { label: 'Reports',           href: '/reports',          icon: 'fa-flag',                  group: 'Moderation' },
+  { label: 'Auto-Mod',          href: '/automod',          icon: 'fa-shield-halved',         group: 'Moderation' },
+  { label: 'Tickets',           href: '/tickets',          icon: 'fa-ticket',                group: 'Support' },
+  { label: 'Community',         href: '/community',        icon: 'fa-users',                 group: 'Support' },
+  { label: 'Welcome',           href: '/welcome',          icon: 'fa-door-open',             group: 'Support' },
+  { label: 'Economy',           href: '/economy',          icon: 'fa-coins',                 group: 'Features' },
+  { label: 'Levels & XP',       href: '/levels',           icon: 'fa-chart-line',            group: 'Features' },
+  { label: 'Giveaways',         href: '/giveaways',        icon: 'fa-gift',                  group: 'Features' },
+  { label: 'Polls',             href: '/polls',            icon: 'fa-square-poll-vertical',  group: 'Features' },
+  { label: 'Reminders',         href: '/reminders',        icon: 'fa-bell',                  group: 'Features' },
+  { label: 'Voice & Music',     href: '/voice-music',      icon: 'fa-headphones',            group: 'Features' },
+  { label: 'Custom Commands',   href: '/custom-commands',  icon: 'fa-terminal',              group: 'Features' },
+  { label: 'Permissions',       href: '/permissions',      icon: 'fa-lock',                  group: 'Features' },
+  { label: 'GitHub Integration',href: '/integrations',     icon: 'fa-brands fa-github',      group: 'Integrations' },
+  { label: 'GitLab Integration',href: '/integrations/gitlab', icon: 'fa-brands fa-gitlab',   group: 'Integrations' },
+  { label: 'Knowledge Base',    href: '/knowledge',        icon: 'fa-brain',                 group: 'AI & Knowledge' },
+  { label: 'Web Crawler',       href: '/knowledge?tab=crawl',    icon: 'fa-spider',         group: 'AI & Knowledge' },
+  { label: 'Training',          href: '/knowledge?tab=training', icon: 'fa-graduation-cap', group: 'AI & Knowledge' },
+  { label: 'Feedback',          href: '/knowledge?tab=feedback', icon: 'fa-star',           group: 'AI & Knowledge' },
+  { label: 'Logout',            href: '/logout',           icon: 'fa-arrow-right-from-bracket', group: 'Account' },
+];
+
+let _cmdkSelected = 0;
+let _cmdkFiltered = [];
+
+function _cmdkEscape(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function _cmdkScore(item, q) {
+  if (!q) return 1;
+  const label = item.label.toLowerCase();
+  const group = (item.group || '').toLowerCase();
+  if (label.startsWith(q)) return 100;
+  if (label.includes(q)) return 60;
+  if (group.includes(q)) return 30;
+  // fuzzy: all query chars appear in order
+  let i = 0;
+  for (const c of label) { if (c === q[i]) i++; if (i >= q.length) break; }
+  return i === q.length ? 10 : 0;
+}
+
+function _cmdkRender() {
+  const container = document.getElementById('cmdk-results');
+  if (!container) return;
+  if (!_cmdkFiltered.length) {
+    container.innerHTML = '<div class="cmdk-empty">No matches</div>';
+    return;
+  }
+  container.innerHTML = _cmdkFiltered.map((item, i) => `
+    <a href="${_cmdkEscape(item.href)}" class="cmdk-item ${i === _cmdkSelected ? 'cmdk-selected' : ''}" data-cmdk-index="${i}">
+      <i class="fa ${_cmdkEscape(item.icon)} lead"></i>
+      <span>${_cmdkEscape(item.label)}</span>
+      <span class="cmdk-sub">${_cmdkEscape(item.group || '')}</span>
+    </a>
+  `).join('');
+  // Keep selected in view
+  const sel = container.querySelector('.cmdk-selected');
+  if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest' });
+}
+
+function _cmdkUpdate() {
+  const input = document.getElementById('cmdk-input');
+  const q = (input?.value || '').trim().toLowerCase();
+  _cmdkFiltered = CMDK_PAGES
+    .map(item => ({ item, score: _cmdkScore(item, q) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(x => x.item);
+  _cmdkSelected = 0;
+  _cmdkRender();
+}
+
+function openCmdK() {
+  const overlay = document.getElementById('cmdk-overlay');
+  const input   = document.getElementById('cmdk-input');
+  if (!overlay || !input) return;
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  input.value = '';
+  _cmdkUpdate();
+  setTimeout(() => input.focus(), 10);
+}
+
+function closeCmdK() {
+  const overlay = document.getElementById('cmdk-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+}
+
+window.openCmdK  = openCmdK;
+window.closeCmdK = closeCmdK;
+
 // ── Initialisation ───────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -130,15 +253,66 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Keyboard shortcut: Ctrl+B = toggle sidebar
+  // Command palette input handlers
+  const cmdkInput = document.getElementById('cmdk-input');
+  if (cmdkInput) {
+    cmdkInput.addEventListener('input', _cmdkUpdate);
+    cmdkInput.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (_cmdkFiltered.length) {
+          _cmdkSelected = (_cmdkSelected + 1) % _cmdkFiltered.length;
+          _cmdkRender();
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (_cmdkFiltered.length) {
+          _cmdkSelected = (_cmdkSelected - 1 + _cmdkFiltered.length) % _cmdkFiltered.length;
+          _cmdkRender();
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const target = _cmdkFiltered[_cmdkSelected];
+        if (target) window.location.href = target.href;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCmdK();
+      }
+    });
+  }
+  const cmdkResults = document.getElementById('cmdk-results');
+  if (cmdkResults) {
+    cmdkResults.addEventListener('mousemove', e => {
+      const item = e.target.closest('[data-cmdk-index]');
+      if (!item) return;
+      const idx = parseInt(item.getAttribute('data-cmdk-index'), 10);
+      if (!Number.isNaN(idx) && idx !== _cmdkSelected) {
+        _cmdkSelected = idx;
+        _cmdkRender();
+      }
+    });
+  }
+
+  // Keyboard shortcuts
   document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+    // Ctrl/Cmd+K = open command palette
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      openCmdK();
+      return;
+    }
+    // Ctrl/Cmd+B = toggle sidebar (ignore if typing in cmdk)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+      const active = document.activeElement;
+      if (active && active.id === 'cmdk-input') return;
       e.preventDefault();
       toggleSidebar();
     }
-    // Escape = close mobile sidebar
+    // Escape = close mobile sidebar / command palette
     if (e.key === 'Escape') {
+      closeCmdK();
       closeMobileSidebar();
+      closeGuildPicker();
     }
   });
 
