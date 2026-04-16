@@ -1,3 +1,171 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 {
     "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
     "meta": {
@@ -14,7 +182,7 @@
         "Java 21 + Python 3 (recommended)": "ghcr.io/parkervcp/yolks:java_21"
     },
     "file_denylist": [],
-    "startup": "bash /home/container/startup.sh",
+    "startup": "if [ -f /home/container/startup.sh ]; then bash /home/container/startup.sh; else pip3 install -q -r /home/container/requirements.txt && cd /home/container/lavalink && java -Xmx${LAVALINK_MEMORY:-512}m -jar Lavalink.jar & sleep 20 && cd /home/container && exec python main.py; fi",
     "config": {
         "files": "{}",
         "startup": "{\"done\": \"Bot is ready\"}",
@@ -207,6 +375,126 @@
             "user_viewable": true,
             "user_editable": true,
             "rules": "nullable|string|max:30",
+            "field_type": "text"
+        },
+        {
+            "name": "LLM Model",
+            "description": "Default LLM model name (overridable per-guild via /assistant).",
+            "env_variable": "LLM_MODEL",
+            "default_value": "gpt-3.5-turbo",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "LiteLLM Proxy",
+            "description": "Set to 1 if LLM_BASE_URL is a LiteLLM proxy but the hostname does not contain 'litellm'.",
+            "env_variable": "LLM_LITELLM_PROXY",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:5",
+            "field_type": "text"
+        },
+        {
+            "name": "LLM Debug",
+            "description": "Set to 1 to enable verbose LLM tracing in logs.",
+            "env_variable": "LLM_DEBUG",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:5",
+            "field_type": "text"
+        },
+        {
+            "name": "LLM Reasoning Effort",
+            "description": "Forwarded as reasoning_effort to the LLM API (low / medium / high). Leave blank to omit.",
+            "env_variable": "LLM_REASONING_EFFORT",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:10",
+            "field_type": "text"
+        },
+        {
+            "name": "Skip Qwen Chat Template Kwargs",
+            "description": "Set to 1 if your proxy rejects extra_body chat_template_kwargs for Qwen3 models.",
+            "env_variable": "LLM_SKIP_QWEN_CHAT_TEMPLATE_KWARGS",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:5",
+            "field_type": "text"
+        },
+        {
+            "name": "System Prompt",
+            "description": "Bot-level system prompt prepended to every guild's prompt. Supports placeholders: {botname} {server} {members} {username} etc.",
+            "env_variable": "SYSTEM_PROMPT",
+            "default_value": "You are a helpful support assistant. Answer questions clearly and concisely. If you don't know the answer, say so honestly.",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:2000",
+            "field_type": "text"
+        },
+        {
+            "name": "Max History Turns",
+            "description": "Maximum conversation history turns kept per user (default 20).",
+            "env_variable": "MAX_HISTORY_TURNS",
+            "default_value": "20",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|integer|between:1,200",
+            "field_type": "text"
+        },
+        {
+            "name": "Qdrant API Key",
+            "description": "API key for Qdrant if your instance is secured (leave blank for unsecured).",
+            "env_variable": "QDRANT_API_KEY",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Dashboard Host",
+            "description": "Host the dashboard binds to (default 0.0.0.0).",
+            "env_variable": "DASHBOARD_HOST",
+            "default_value": "0.0.0.0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:50",
+            "field_type": "text"
+        },
+        {
+            "name": "GitHub Token",
+            "description": "GitHub personal access token for the GitHub integration cog (optional).",
+            "env_variable": "GITHUB_TOKEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "GitLab Token",
+            "description": "GitLab personal access token for the GitLab integration cog (optional).",
+            "env_variable": "GITLAB_TOKEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "GitLab URL",
+            "description": "Self-hosted GitLab instance URL (default: https://gitlab.com).",
+            "env_variable": "GITLAB_URL",
+            "default_value": "https://gitlab.com",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:200",
             "field_type": "text"
         }
     ]
