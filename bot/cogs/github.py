@@ -84,6 +84,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_SENDABLE_CHANNEL_TYPES = (discord.TextChannel, discord.Thread)
+
+
 
 class GitHubIssueModal(discord.ui.Modal):
     def __init__(
@@ -369,7 +372,33 @@ class GitHubCog(commands.Cog, name="GitHub"):
             return None
         return data
 
-    async def _send_review_digest(self, guild: discord.Guild, channel: discord.TextChannel, repo: str, stale_hours: int) -> bool:
+    async def _resolve_notification_channel(
+        self,
+        channel_id: int,
+    ) -> discord.TextChannel | discord.Thread | None:
+        channel = self.bot.get_channel(channel_id)
+        if isinstance(channel, _SENDABLE_CHANNEL_TYPES):
+            return channel
+        try:
+            channel = await self.bot.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden) as exc:
+            logger.warning("GitHub: failed to resolve channel %d: %s", channel_id, exc)
+            return None
+        except discord.HTTPException as exc:
+            logger.warning("GitHub: failed to fetch channel %d: %s", channel_id, exc)
+            return None
+        if isinstance(channel, _SENDABLE_CHANNEL_TYPES):
+            return channel
+        logger.warning("GitHub: unsupported channel type for %d", channel_id)
+        return None
+
+    async def _send_review_digest(
+        self,
+        guild: discord.Guild,
+        channel: discord.TextChannel | discord.Thread,
+        repo: str,
+        stale_hours: int,
+    ) -> bool:
         queue = await self._fetch_review_queue(repo)
         if not queue:
             return False
@@ -412,8 +441,8 @@ class GitHubCog(commands.Cog, name="GitHub"):
             if not _should_send_review_digest(now, hour_utc, last_sent_on):
                 continue
 
-            channel = guild.get_channel(int(channel_raw))
-            if not isinstance(channel, discord.TextChannel):
+            channel = await self._resolve_notification_channel(int(channel_raw))
+            if channel is None:
                 continue
 
             try:
@@ -660,8 +689,8 @@ class GitHubCog(commands.Cog, name="GitHub"):
             sub_events = {e.strip() for e in sub["events"].split(",")}
             if event_key not in sub_events:
                 continue
-            channel = self.bot.get_channel(sub["channel_id"])
-            if channel is None or not isinstance(channel, discord.TextChannel):
+            channel = await self._resolve_notification_channel(sub["channel_id"])
+            if channel is None:
                 continue
             try:
                 await channel.send(embed=embed)

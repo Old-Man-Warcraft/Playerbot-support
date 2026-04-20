@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
+
 import bot.db.base as database_module
 from bot.cogs.github import (
     GitHubCog,
@@ -47,6 +49,35 @@ class GitHubPollerBootstrapTests(unittest.IsolatedAsyncioTestCase):
             'W/"abc123"',
         )
         cog._dispatch_event.assert_not_awaited()
+
+    async def test_dispatch_event_fetches_channel_when_not_cached(self) -> None:
+        channel = AsyncMock(spec=discord.TextChannel)
+        bot = MagicMock()
+        bot.tree = MagicMock()
+        bot.tree.add_command = MagicMock()
+        bot.get_channel.return_value = None
+        bot.fetch_channel = AsyncMock(return_value=channel)
+
+        cog = GitHubCog(bot=bot, db=MagicMock(), config=SimpleNamespace(github_token=None))
+
+        event = {
+            "type": "IssuesEvent",
+            "payload": {
+                "action": "opened",
+                "issue": {
+                    "number": 7,
+                    "title": "Broken notifications",
+                    "html_url": "https://github.com/o/r/issues/7",
+                    "body": "Monitor stopped posting.",
+                },
+                "sender": {"login": "octocat", "avatar_url": "https://example.com/avatar.png"},
+            },
+        }
+
+        await cog._dispatch_event("owner/repo", event, subscribers=[{"channel_id": 123, "events": "issues"}])
+
+        bot.fetch_channel.assert_awaited_once_with(123)
+        channel.send.assert_awaited_once()
 
 
 class GitHubSubscriptionCleanupTests(unittest.IsolatedAsyncioTestCase):

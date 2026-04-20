@@ -45,6 +45,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+_SENDABLE_CHANNEL_TYPES = (discord.TextChannel, discord.Thread)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -587,6 +590,26 @@ class GitLabCog(commands.Cog, name="GitLab"):
             return None
         return resolved
 
+    async def _resolve_notification_channel(
+        self,
+        channel_id: int,
+    ) -> discord.TextChannel | discord.Thread | None:
+        channel = self.bot.get_channel(channel_id)
+        if isinstance(channel, _SENDABLE_CHANNEL_TYPES):
+            return channel
+        try:
+            channel = await self.bot.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden) as exc:
+            logger.warning("GitLab: failed to resolve channel %d: %s", channel_id, exc)
+            return None
+        except discord.HTTPException as exc:
+            logger.warning("GitLab: failed to fetch channel %d: %s", channel_id, exc)
+            return None
+        if isinstance(channel, _SENDABLE_CHANNEL_TYPES):
+            return channel
+        logger.warning("GitLab: unsupported channel type for %d", channel_id)
+        return None
+
     # ------------------------------------------------------------------ poller
 
     @tasks.loop(seconds=POLL_INTERVAL_SECONDS)
@@ -792,8 +815,8 @@ class GitLabCog(commands.Cog, name="GitLab"):
             sub_events = {e.strip() for e in sub["events"].split(",")}
             if event_key not in sub_events:
                 continue
-            channel = self.bot.get_channel(sub["channel_id"])
-            if channel is None or not isinstance(channel, discord.TextChannel):
+            channel = await self._resolve_notification_channel(sub["channel_id"])
+            if channel is None:
                 continue
             try:
                 await channel.send(embed=embed)
