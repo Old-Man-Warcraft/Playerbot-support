@@ -215,6 +215,7 @@ The dashboard **Integrations** page can now manage GitHub workflow settings such
 - **/github subscribe** `<repo> [channel] [events]` — subscribe a channel to a repo's events.
 - **/github unsubscribe** `<repo> [channel]` — remove a subscription.
 - **/github subscriptions** — list all active subscriptions for this server.
+- **/github_check** `[owner/repo]` / **/gitlab_check** `[namespace/project]` — force an immediate poll of a subscribed target and report whether the poller bootstrapped, found new events, or posted to Discord.
 
 #### RAG Ingestion
 

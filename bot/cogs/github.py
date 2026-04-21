@@ -98,6 +98,27 @@ def _short_api_error(body: Any) -> str:
     return "no details"
 
 
+def _format_github_check_result(repo: str, result: dict[str, Any]) -> str:
+    status = result.get("status")
+    if status == "error":
+        return (
+            f"❌ GitHub check failed for `{repo}`. "
+            f"Status: `{result.get('http_status', '?')}`. Detail: {result.get('detail', 'no details')}."
+        )
+    if status == "bootstrapped":
+        return (
+            f"ℹ️ Checked `{repo}`. Poll state was empty, so the latest event `{result.get('newest_id', 'unknown')}` "
+            f"was recorded as the baseline and nothing was posted. Trigger one more new event and run the check again."
+        )
+    if status == "unchanged":
+        return f"ℹ️ No new GitHub events for `{repo}` since the last poll state."
+    return (
+        f"✅ Checked `{repo}`. New events: `{result.get('new_events', 0)}`. "
+        f"Matching subscriptions: `{result.get('matched_subscriptions', 0)}`. "
+        f"Discord posts sent: `{result.get('sent_messages', 0)}`."
+    )
+
+
 
 class GitHubIssueModal(discord.ui.Modal):
     def __init__(
@@ -498,7 +519,7 @@ class GitHubCog(commands.Cog, name="GitHub"):
         for repo, subscribers in repo_subs.items():
             await self._poll_repo(repo, subscribers)
 
-    async def _poll_repo(self, repo: str, subscribers: list) -> None:
+    async def _poll_repo(self, repo: str, subscribers: list) -> dict[str, Any]:
         """Poll GitHub events endpoint for a repo and dispatch to subscribed channels."""
         state = await self.db.get_github_poll_state(repo, "events")
         etag = state["etag"] if state else None
@@ -514,8 +535,8 @@ class GitHubCog(commands.Cog, name="GitHub"):
         )
 
         new_etag = resp_headers.get("ETag") or resp_headers.get("etag")
-        if status == 304 or body is None:
-            return
+        if status == 304:
+            return {"status": "unchanged", "http_status": status, "new_events": 0, "matched_subscriptions": 0, "sent_messages": 0}
         if status != 200:
             logger.warning(
                 "GitHub poller request failed for %s: status=%s detail=%s",
@@ -523,26 +544,57 @@ class GitHubCog(commands.Cog, name="GitHub"):
                 status,
                 _short_api_error(body),
             )
-            return
+            return {
+                "status": "error",
+                "http_status": status,
+                "detail": _short_api_error(body),
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
+        if body is None:
+            logger.warning("GitHub poller returned empty body for %s", repo)
+            return {
+                "status": "error",
+                "http_status": status,
+                "detail": "empty body",
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
         if not isinstance(body, list):
             logger.warning(
                 "GitHub poller returned unexpected body for %s: %s",
                 repo,
                 type(body).__name__,
             )
-            return
+            return {
+                "status": "error",
+                "http_status": status,
+                "detail": f"unexpected body type: {type(body).__name__}",
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
 
         events = body  # list newest-first
         if not events:
             await self.db.set_github_poll_state(repo, "events", last_id, new_etag)
-            return
+            return {"status": "unchanged", "http_status": status, "new_events": 0, "matched_subscriptions": 0, "sent_messages": 0}
 
         newest_id = str(events[0].get("id", ""))
 
         if state is None:
             await self.db.set_github_poll_state(repo, "events", newest_id, new_etag)
             logger.info("GitHub poller bootstrap for %s — seeded latest event %s", repo, newest_id)
-            return
+            return {
+                "status": "bootstrapped",
+                "http_status": status,
+                "newest_id": newest_id,
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
 
         # Collect new events (stop at last_id)
         new_events: list[dict] = []
@@ -555,8 +607,20 @@ class GitHubCog(commands.Cog, name="GitHub"):
         await self.db.set_github_poll_state(repo, "events", newest_id, new_etag)
 
         # Process newest-last so embeds appear in chronological order
+        matched_subscriptions = 0
+        sent_messages = 0
         for ev in reversed(new_events):
-            await self._dispatch_event(repo, ev, subscribers)
+            dispatch_result = await self._dispatch_event(repo, ev, subscribers)
+            matched_subscriptions += dispatch_result["matched"]
+            sent_messages += dispatch_result["sent"]
+        return {
+            "status": "checked",
+            "http_status": status,
+            "newest_id": newest_id,
+            "new_events": len(new_events),
+            "matched_subscriptions": matched_subscriptions,
+            "sent_messages": sent_messages,
+        }
 
     async def _generate_commit_embeddings(self, repo: str, commits: list[dict], branch: str, pusher: str) -> None:
         """Generate RAG embeddings for GitHub push commits."""
@@ -676,9 +740,10 @@ class GitHubCog(commands.Cog, name="GitHub"):
             merged["head_commit"] = commits[-1]
         return merged
 
-    async def _dispatch_event(self, repo: str, event: dict, subscribers: list) -> None:
+    async def _dispatch_event(self, repo: str, event: dict, subscribers: list) -> dict[str, int]:
         event_type = event.get("type", "")
         payload = event.get("payload") or {}
+        dispatch_result = {"matched": 0, "sent": 0}
 
         embed: discord.Embed | None = None
 
@@ -704,24 +769,31 @@ class GitHubCog(commands.Cog, name="GitHub"):
             embed = _release_embed(repo, payload)
             event_key = "release"
         else:
-            return
+            return dispatch_result
 
         if embed is None:
-            return
+            return dispatch_result
 
         for sub in subscribers:
             sub_events = {e.strip() for e in sub["events"].split(",")}
             if event_key not in sub_events:
                 continue
+            dispatch_result["matched"] += 1
             channel = await self._resolve_notification_channel(sub["channel_id"])
             if channel is None:
                 continue
             try:
                 await channel.send(embed=embed)
+                dispatch_result["sent"] += 1
             except discord.Forbidden:
                 logger.warning("GitHub: no permission to send in channel %d", sub["channel_id"])
             except Exception as exc:
                 logger.warning("GitHub dispatch error: %s", exc)
+        return dispatch_result
+
+    async def _subscribers_for_repo(self, guild_id: int, repo: str) -> list[Any]:
+        subs = await self.db.get_github_subscriptions(guild_id)
+        return [sub for sub in subs if sub["repo"] == repo]
 
     # ------------------------------------------------------------------ slash commands
 
@@ -1457,6 +1529,24 @@ class GitHubCog(commands.Cog, name="GitHub"):
                 inline=True,
             )
         await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @app_commands.command(name="github_check", description="Manually check a subscribed GitHub repo for new events now.")
+    @app_commands.describe(repo="Subscribed owner/repo (optional if the default repo is subscribed)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def gh_check(self, interaction: discord.Interaction, repo: str | None = None) -> None:
+        repo = await self._resolve_repo(interaction, repo)
+        if not repo:
+            return
+        subscribers = await self._subscribers_for_repo(interaction.guild_id, repo)  # type: ignore[arg-type]
+        if not subscribers:
+            await interaction.response.send_message(
+                f"❌ `{repo}` is not subscribed in this server. Add a subscription first.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await self._poll_repo(repo, subscribers)
+        await interaction.followup.send(_format_github_check_result(repo, result), ephemeral=True)
 
     # ------------------------------------------------------------------ RAG ingestion
 

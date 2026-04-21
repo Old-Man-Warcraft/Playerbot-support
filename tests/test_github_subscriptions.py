@@ -40,7 +40,7 @@ class GitHubPollerBootstrapTests(unittest.IsolatedAsyncioTestCase):
         )
         cog._dispatch_event = AsyncMock()
 
-        await cog._poll_repo("octocat/Hello-World", subscribers=[{"channel_id": 123, "events": "push"}])
+        result = await cog._poll_repo("octocat/Hello-World", subscribers=[{"channel_id": 123, "events": "push"}])
 
         db.set_github_poll_state.assert_awaited_once_with(
             "octocat/Hello-World",
@@ -49,6 +49,40 @@ class GitHubPollerBootstrapTests(unittest.IsolatedAsyncioTestCase):
             'W/"abc123"',
         )
         cog._dispatch_event.assert_not_awaited()
+        self.assertEqual(result["status"], "bootstrapped")
+        self.assertEqual(result["newest_id"], "evt_3")
+
+    async def test_poll_repo_reports_new_events_and_dispatch_counts(self) -> None:
+        db = MagicMock()
+        db.get_github_poll_state = AsyncMock(return_value={"etag": None, "last_id": "evt_1"})
+        db.set_github_poll_state = AsyncMock()
+
+        cog = GitHubCog(bot=MagicMock(), db=db, config=SimpleNamespace(github_token=None))
+        cog.gh.get = AsyncMock(
+            return_value=(
+                200,
+                [
+                    {"id": "evt_3", "type": "IssuesEvent", "payload": {}},
+                    {"id": "evt_2", "type": "IssuesEvent", "payload": {}},
+                    {"id": "evt_1", "type": "IssuesEvent", "payload": {}},
+                ],
+                {"ETag": 'W/"new"'},
+            )
+        )
+        cog._dispatch_event = AsyncMock(side_effect=[{"matched": 1, "sent": 1}, {"matched": 2, "sent": 1}])
+
+        result = await cog._poll_repo("octocat/Hello-World", subscribers=[{"channel_id": 123, "events": "issues"}])
+
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["new_events"], 2)
+        self.assertEqual(result["matched_subscriptions"], 3)
+        self.assertEqual(result["sent_messages"], 2)
+        db.set_github_poll_state.assert_awaited_once_with(
+            "octocat/Hello-World",
+            "events",
+            "evt_3",
+            'W/"new"',
+        )
 
     async def test_dispatch_event_fetches_channel_when_not_cached(self) -> None:
         channel = AsyncMock(spec=discord.TextChannel)

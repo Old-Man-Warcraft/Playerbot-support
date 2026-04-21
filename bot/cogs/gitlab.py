@@ -59,6 +59,27 @@ def _short_api_error(body: Any) -> str:
         return body.strip()[:200]
     return "no details"
 
+
+def _format_gitlab_check_result(project: str, result: dict[str, Any]) -> str:
+    status = result.get("status")
+    if status == "error":
+        return (
+            f"❌ GitLab check failed for `{project}`. "
+            f"Status: `{result.get('http_status', '?')}`. Detail: {result.get('detail', 'no details')}."
+        )
+    if status == "bootstrapped":
+        return (
+            f"ℹ️ Checked `{project}`. Poll state was empty, so the latest event `{result.get('newest_id', 'unknown')}` "
+            f"was recorded as the baseline and nothing was posted. Trigger one more new event and run the check again."
+        )
+    if status == "unchanged":
+        return f"ℹ️ No new GitLab events for `{project}` since the last poll state."
+    return (
+        f"✅ Checked `{project}`. New events: `{result.get('new_events', 0)}`. "
+        f"Matching subscriptions: `{result.get('matched_subscriptions', 0)}`. "
+        f"Discord posts sent: `{result.get('sent_messages', 0)}`."
+    )
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -644,7 +665,7 @@ class GitLabCog(commands.Cog, name="GitLab"):
         for project, subscribers in project_subs.items():
             await self._poll_project(project, subscribers)
 
-    async def _poll_project(self, project: str, subscribers: list) -> None:
+    async def _poll_project(self, project: str, subscribers: list) -> dict[str, Any]:
         """Poll GitLab events API for a project and dispatch to subscribed channels."""
         state = await self.db.get_gitlab_poll_state(project, "events")
         last_id = state["last_id"] if state else None
@@ -661,25 +682,46 @@ class GitLabCog(commands.Cog, name="GitLab"):
                 status,
                 _short_api_error(body),
             )
-            return
+            return {
+                "status": "error",
+                "http_status": status,
+                "detail": _short_api_error(body),
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
         if not isinstance(body, list):
             logger.warning(
                 "GitLab poller returned unexpected body for %s: %s",
                 project,
                 type(body).__name__,
             )
-            return
+            return {
+                "status": "error",
+                "http_status": status,
+                "detail": f"unexpected body type: {type(body).__name__}",
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
 
         events: list[dict] = body
         if not events:
-            return
+            return {"status": "unchanged", "http_status": status, "new_events": 0, "matched_subscriptions": 0, "sent_messages": 0}
 
         newest_id = str(events[0].get("id", ""))
 
         if state is None:
             await self.db.set_gitlab_poll_state(project, "events", newest_id)
             logger.info("GitLab poller bootstrap for %s — seeded latest event %s", project, newest_id)
-            return
+            return {
+                "status": "bootstrapped",
+                "http_status": status,
+                "newest_id": newest_id,
+                "new_events": 0,
+                "matched_subscriptions": 0,
+                "sent_messages": 0,
+            }
 
         new_events: list[dict] = []
         for ev in events:
@@ -690,12 +732,25 @@ class GitLabCog(commands.Cog, name="GitLab"):
 
         await self.db.set_gitlab_poll_state(project, "events", newest_id)
 
+        matched_subscriptions = 0
+        sent_messages = 0
         for ev in reversed(new_events):
-            await self._dispatch_event(project, ev, subscribers)
+            dispatch_result = await self._dispatch_event(project, ev, subscribers)
+            matched_subscriptions += dispatch_result["matched"]
+            sent_messages += dispatch_result["sent"]
+        return {
+            "status": "checked",
+            "http_status": status,
+            "newest_id": newest_id,
+            "new_events": len(new_events),
+            "matched_subscriptions": matched_subscriptions,
+            "sent_messages": sent_messages,
+        }
 
-    async def _dispatch_event(self, project: str, event: dict, subscribers: list) -> None:
+    async def _dispatch_event(self, project: str, event: dict, subscribers: list) -> dict[str, int]:
         action_name = event.get("action_name", "")
         target_type = (event.get("target_type") or "").lower()
+        dispatch_result = {"matched": 0, "sent": 0}
 
         embed: discord.Embed | None = None
         event_key: str | None = None
@@ -830,24 +885,31 @@ class GitLabCog(commands.Cog, name="GitLab"):
             event_key = "issues"
 
         else:
-            return
+            return dispatch_result
 
         if embed is None or event_key is None:
-            return
+            return dispatch_result
 
         for sub in subscribers:
             sub_events = {e.strip() for e in sub["events"].split(",")}
             if event_key not in sub_events:
                 continue
+            dispatch_result["matched"] += 1
             channel = await self._resolve_notification_channel(sub["channel_id"])
             if channel is None:
                 continue
             try:
                 await channel.send(embed=embed)
+                dispatch_result["sent"] += 1
             except discord.Forbidden:
                 logger.warning("GitLab: no permission to send in channel %d", sub["channel_id"])
             except Exception as exc:
                 logger.warning("GitLab dispatch error: %s", exc)
+        return dispatch_result
+
+    async def _subscribers_for_project(self, guild_id: int, project: str) -> list[Any]:
+        subs = await self.db.get_gitlab_subscriptions(guild_id)
+        return [sub for sub in subs if sub["project"] == project]
 
     # ------------------------------------------------------------------ slash commands
 
@@ -1334,6 +1396,24 @@ class GitLabCog(commands.Cog, name="GitLab"):
                 inline=True,
             )
         await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @app_commands.command(name="gitlab_check", description="Manually check a subscribed GitLab project for new events now.")
+    @app_commands.describe(project="Subscribed namespace/project (optional if the default project is subscribed)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def gl_check(self, interaction: discord.Interaction, project: str | None = None) -> None:
+        project = await self._resolve_project(interaction, project)
+        if not project:
+            return
+        subscribers = await self._subscribers_for_project(interaction.guild_id, project)  # type: ignore[arg-type]
+        if not subscribers:
+            await interaction.response.send_message(
+                f"❌ `{project}` is not subscribed in this server. Add a subscription first.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await self._poll_project(project, subscribers)
+        await interaction.followup.send(_format_gitlab_check_result(project, result), ephemeral=True)
 
     # ------------------------------------------------------------------ RAG ingestion
 
