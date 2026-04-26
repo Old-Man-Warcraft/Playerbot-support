@@ -25,7 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from dashboard.dynamic_config_schema import DynamicConfigSchema
 from dashboard.routes.github_integrations import GitHubIntegrationsModule
 from dashboard.routes.gitlab_integrations import GitLabIntegrationsModule
-from dashboard.routes import auth, overview, assistant, community, moderation, economy, misc, knowledge, voice_music, welcome as welcome_routes, polls as polls_routes
+from dashboard.routes import auth, overview, assistant, community, moderation, economy, misc, knowledge, voice_music, welcome as welcome_routes, polls as polls_routes, social_alerts as social_alert_routes
 from dashboard.routes import config as config_routes
 from dashboard.helpers import (
     DB_PATH,
@@ -81,6 +81,13 @@ app.include_router(misc.init(templates))
 app.include_router(voice_music.init(templates))
 app.include_router(knowledge.init(templates))
 app.include_router(welcome_routes.init(templates))
+app.include_router(
+    social_alert_routes.init(
+        templates,
+        twitch_configured=bool(config.twitch_client_id and config.twitch_client_secret),
+        youtube_configured=bool(config.youtube_api_key),
+    )
+)
 
 # ---------------------------------------------------------------------------
 # Integrations (pre-existing APIRouter-based modules)

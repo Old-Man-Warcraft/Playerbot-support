@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+{% block title %}Stream Alerts — Bot Dashboard{% endblock %}
+{% block header %}Stream Alerts{% endblock %}
+
+{% block content %}
+<style>
+  .streams-layout {
+    display: grid;
+    grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+    gap: 1.5rem;
+  }
+  .streams-sticky {
+    position: sticky;
+    top: 1.5rem;
+    align-self: start;
+  }
+  .hero-shell {
+    background: linear-gradient(135deg, rgba(12, 18, 38, 0.96), rgba(28, 20, 54, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  }
+  .stat-tile {
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.72);
+    padding: 1rem;
+  }
+  .soft-panel {
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    background: rgba(15, 23, 42, 0.78);
+  }
+  .flash-banner {
+    border-radius: 1rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+  }
+  .flash-banner.success {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(52, 211, 153, 0.22);
+    color: rgb(167, 243, 208);
+  }
+  .flash-banner.error {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(248, 113, 113, 0.24);
+    color: rgb(254, 202, 202);
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border-radius: 999px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .status-pill.live {
+    background: rgba(239, 68, 68, 0.12);
+    color: rgb(252, 165, 165);
+  }
+  .status-pill.feed {
+    background: rgba(56, 189, 248, 0.12);
+    color: rgb(125, 211, 252);
+  }
+  .config-note {
+    border-radius: 0.9rem;
+    border: 1px solid rgba(250, 204, 21, 0.18);
+    background: rgba(250, 204, 21, 0.08);
+    color: rgb(253, 224, 71);
+    padding: 0.85rem 1rem;
+    font-size: 0.86rem;
+  }
+  .channel-picker {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .template-hint code {
+    color: rgb(191, 219, 254);
+  }
+  @media (max-width: 1100px) {
+    .streams-layout {
+      grid-template-columns: 1fr;
+    }
+    .streams-sticky {
+      position: static;
+    }
+  }
+</style>
+
+<div class="streams-layout">
+  <aside class="streams-sticky space-y-4">
+    <div class="card p-4">
+      <p class="text-xs uppercase tracking-[0.24em] text-slate-500">Guild scope</p>
+      {% if guilds|length > 1 %}
+      <form method="get" action="/social-alerts" class="mt-3 space-y-2">
+        <label for="guild-selector" class="sr-only">Select guild</label>
+        <select id="guild-selector" name="guild_id" class="input w-full text-sm" onchange="this.form.submit()">
+          <option value="" {% if not guild_id %}selected{% endif %} disabled>Choose a guild…</option>
+          {% for g in guilds %}
+          <option value="{{ g.guild_id }}" {% if guild_id == g.guild_id %}selected{% endif %}>{{ g.guild_name }} — {{ g.guild_id }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      {% elif guilds %}
+      {% set selected = guilds[0] %}
+      <div class="mt-3 rounded-xl border border-slate-700/80 bg-slate-900/60 px-4 py-3">
+        <p class="text-sm font-medium text-white">{{ selected.guild_name }}</p>
+        <p class="mt-1 text-xs font-mono text-slate-400">{{ selected.guild_id }}</p>
+      </div>
+      {% else %}
+      <p class="mt-3 text-sm text-slate-400">No guilds found.</p>
+      {% endif %}
+    </div>
+
+    <div class="card p-4 space-y-3">
+      <h3 class="text-sm font-semibold text-white">Promotion placeholders</h3>
+      <p class="text-sm text-slate-400 template-hint">Use mentions or promo copy directly in templates, for example <code>@everyone 🔴 {creator} just went live</code>.</p>
+      <div class="text-xs text-slate-500 space-y-2">
+        <p><code>{creator}</code>, <code>{title}</code>, <code>{link}</code>, <code>{platform}</code></p>
+        <p><code>{game}</code>, <code>{viewers}</code>, <code>{description}</code>, <code>{date}</code></p>
+      </div>
+    </div>
+
+    <div class="card p-4 space-y-3">
+      <h3 class="text-sm font-semibold text-white">Provider status</h3>
+      <div class="text-sm space-y-2">
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-slate-300">Twitch API</span>
+          <span class="status-pill {% if twitch_configured %}feed{% else %}live{% endif %}">{{ "Ready" if twitch_configured else "Missing keys" }}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-slate-300">YouTube API</span>
+          <span class="status-pill {% if youtube_configured %}feed{% else %}live{% endif %}">{{ "Ready" if youtube_configured else "Missing key" }}</span>
+        </div>
+      </div>
+      {% if not twitch_configured or not youtube_configured %}
+      <p class="text-xs text-slate-500">Saving alerts still works, but live detection only starts once the matching environment variables are configured.</p>
+      {% endif %}
+    </div>
+  </aside>
+
+  <div class="space-y-6 min-w-0">
+    {% if not guild_id %}
+    <section class="hero-shell card p-10 text-center">
+      <div class="mx-auto mb-4 w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-400/20 text-rose-300 flex items-center justify-center">
+        <i class="fa fa-tower-broadcast text-xl"></i>
+      </div>
+      <h2 class="text-2xl font-semibold text-white">Pick a guild to manage stream promotion</h2>
+      <p class="mt-3 text-sm text-slate-400 max-w-2xl mx-auto">Use this workspace to track Twitch and YouTube live alerts, keep RSS feeds alongside them, and tailor the promotion message that lands in Discord.</p>
+    </section>
+    {% else %}
+
+    {% if flash %}
+    <div class="flash-banner {{ flash.level if flash.level in ['success', 'error'] else 'success' }}">
+      <div class="flex items-start gap-3">
+        <i class="fa {% if flash.level == 'error' %}fa-triangle-exclamation{% else %}fa-circle-check{% endif %} mt-0.5"></i>
+        <p class="text-sm">{{ flash.message }}</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <section class="hero-shell card p-6 xl:p-8">
+      <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-6">
+        <div class="max-w-3xl">
+          <p class="text-xs uppercase tracking-[0.24em] text-rose-300/70">Live promotion workspace</p>
+          <h2 class="mt-3 text-2xl xl:text-3xl font-semibold text-white">{{ selected_guild.guild_name if selected_guild else ('Guild ' ~ guild_id) }}</h2>
+          <p class="mt-2 text-sm text-slate-300">Track who is live, where alerts land, and what promotional copy gets posted when Twitch or YouTube streams come online.</p>
+          <div class="mt-5 flex flex-wrap gap-2">
+            <a href="#add-alert" class="btn-secondary text-xs px-3 py-2"><i class="fa fa-plus"></i> Add alert</a>
+            <a href="#active-alerts" class="btn-secondary text-xs px-3 py-2"><i class="fa fa-list"></i> Review active alerts</a>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 xl:min-w-[22rem]">
+          <div class="stat-tile">
+            <p class="text-xs uppercase tracking-[0.18em] text-slate-500">Active alerts</p>
+            <p class="mt-2 text-2xl font-semibold text-white">{{ stats.enabled }}</p>
+            <p class="mt-1 text-xs text-slate-400">Currently dispatching notifications.</p>
+          </div>
+          <div class="stat-tile">
+            <p class="text-xs uppercase tracking-[0.18em] text-slate-500">Stream alerts</p>
+            <p class="mt-2 text-2xl font-semibold text-white">{{ stats.streams }}</p>
+            <p class="mt-1 text-xs text-slate-400">Twitch and YouTube live targets.</p>
+          </div>
+          <div class="stat-tile">
+            <p class="text-xs uppercase tracking-[0.18em] text-slate-500">RSS feeds</p>
+            <p class="mt-2 text-2xl font-semibold text-white">{{ stats.rss }}</p>
+            <p class="mt-1 text-xs text-slate-400">Non-live feeds managed here too.</p>
+          </div>
+          <div class="stat-tile">
+            <p class="text-xs uppercase tracking-[0.18em] text-slate-500">Total records</p>
+            <p class="mt-2 text-2xl font-semibold text-white">{{ stats.total }}</p>
+            <p class="mt-1 text-xs text-slate-400">Saved delivery rules for this server.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {% if not twitch_configured or not youtube_configured %}
+    <div class="config-note">
+      <i class="fa fa-plug-circle-exclamation mr-2"></i>
+      Twitch requires <strong>TWITCH_CLIENT_ID</strong> and <strong>TWITCH_CLIENT_SECRET</strong>. YouTube requires <strong>YOUTUBE_API_KEY</strong>. Stream alerts can be saved now and will begin posting once those credentials are present.
+    </div>
+    {% endif %}
+
+    <section id="add-alert" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <form method="post" action="/social-alerts/save" class="soft-panel p-5 space-y-4">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <div>
+          <p class="text-xs uppercase tracking-[0.22em] text-rose-300/70">Promote live streams</p>
+          <h3 class="mt-2 text-xl font-semibold text-white">Twitch &amp; YouTube</h3>
+          <p class="mt-2 text-sm text-slate-400">Use a channel URL, handle, or channel ID. Saving the same target again updates the destination channel and template.</p>
+        </div>
+        <label class="field-stack">
+          <span class="text-xs text-slate-400">Platform</span>
+          <select class="input" name="platform" data-template-source="stream">
+            <option value="twitch">Twitch</option>
+            <option value="youtube">YouTube</option>
+          </select>
+        </label>
+        <label class="field-stack">
+          <span class="text-xs text-slate-400">Channel / handle</span>
+          <input class="input" type="text" name="account_id" placeholder="@creator or https://www.twitch.tv/creator" required/>
+          <span class="helper-text">Examples: <span class="font-mono">shroud</span>, <span class="font-mono">@LofiGirl</span>, or a full channel URL.</span>
+        </label>
+        <div class="channel-picker">
+          <label class="field-stack">
+            <span class="text-xs text-slate-400">Discord channel ID</span>
+            <input class="input" type="number" name="channel_id" data-channel-input placeholder="123456789012345678" required/>
+          </label>
+          <label class="field-stack">
+            <span class="text-xs text-slate-400">Known text channels</span>
+            <select class="input" data-channel-select data-channel-placeholder="Choose a Discord channel…">
+              <option value="">Loading channels…</option>
+            </select>
+          </label>
+        </div>
+        <label class="field-stack">
+          <span class="text-xs text-slate-400">Promotion template</span>
+          <textarea class="input min-h-[112px]" name="message_template" data-template-target="stream" placeholder="{{ stream_default_template }}"></textarea>
+          <span class="helper-text">Leave blank to use the default live message. Mention roles or everyone here if that is part of your promotion flow.</span>
+        </label>
+        <button type="submit" class="btn-primary w-full justify-center"><i class="fa fa-tower-broadcast"></i> Save stream alert</button>
+      </form>
+
+      <form method="post" action="/social-alerts/save" class="soft-panel p-5 space-y-4">
+        <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+        <input type="hidden" name="platform" value="rss"/>
+        <div>
+          <p class="text-xs uppercase tracking-[0.22em] text-sky-300/70">Keep feed coverage</p>
+          <h3 class="mt-2 text-xl font-semibold text-white">RSS feed alerts</h3>
+          <p class="mt-2 text-sm text-slate-400">Keep blog, release, or channel-feed notifications in the same place as stream promotions.</p>
+        </div>
+        <label class="field-stack">
+          <span class="text-xs text-slate-400">Feed URL</span>
+          <input class="input" type="url" name="account_id" placeholder="https://example.com/feed.xml" required/>
+        </label>
+        <div class="channel-picker">
+          <label class="field-stack">
+            <span class="text-xs text-slate-400">Discord channel ID</span>
+            <input class="input" type="number" name="channel_id" data-channel-input placeholder="123456789012345678" required/>
+          </label>
+          <label class="field-stack">
+            <span class="text-xs text-slate-400">Known text channels</span>
+            <select class="input" data-channel-select data-channel-placeholder="Choose a Discord channel…">
+              <option value="">Loading channels…</option>
+            </select>
+          </label>
+        </div>
+        <label class="field-stack">
+          <span class="text-xs text-slate-400">Message template</span>
+          <textarea class="input min-h-[112px]" name="message_template" data-template-target="rss" placeholder="{{ rss_default_template }}"></textarea>
+          <span class="helper-text">RSS templates support the same placeholders, which keeps stream and feed promotions stylistically consistent.</span>
+        </label>
+        <button type="submit" class="btn-secondary w-full justify-center"><i class="fa fa-rss"></i> Save RSS alert</button>
+      </form>
+    </section>
+
+    <section id="active-alerts" class="card overflow-hidden">
+      <div class="flex items-center justify-between gap-4 px-5 py-4 border-b border-gray-800 flex-wrap">
+        <div>
+          <h3 class="font-semibold text-white">Active social alerts</h3>
+          <p class="mt-1 text-sm text-slate-400">Toggle, remove, or inspect the delivery rules that promote streams and feeds into Discord.</p>
+        </div>
+        <span class="status-pill feed">{{ alerts|length }} saved</span>
+      </div>
+      {% if alerts %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-slate-500 text-xs border-b border-slate-800/80">
+              <th class="px-4 py-3 font-medium">Target</th>
+              <th class="px-4 py-3 font-medium">Channel</th>
+              <th class="px-4 py-3 font-medium">Template</th>
+              <th class="px-4 py-3 font-medium">Status</th>
+              <th class="px-4 py-3 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for alert in alerts %}
+            <tr class="table-row align-top">
+              <td class="px-4 py-4">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="status-pill {% if alert.alert_type == 'stream' %}live{% else %}feed{% endif %}">{{ platform_labels.get(alert.platform, alert.platform.title()) }}</span>
+                  <span class="text-xs text-slate-500 uppercase tracking-[0.16em]">{{ alert.alert_type }}</span>
+                </div>
+                <p class="mt-3 text-white font-medium break-all">{{ alert.account_id }}</p>
+                <p class="mt-1 text-xs text-slate-500">Saved {{ alert.created_at[:16] if alert.created_at else '—' }}</p>
+              </td>
+              <td class="px-4 py-4 text-slate-300 font-mono text-xs">{{ alert.channel_id }}</td>
+              <td class="px-4 py-4 text-slate-400 text-xs max-w-[26rem]">
+                <div class="whitespace-pre-wrap break-words">{{ alert.message_template }}</div>
+              </td>
+              <td class="px-4 py-4">
+                <span class="status-pill {% if alert.enabled %}feed{% else %}live{% endif %}">{{ 'Enabled' if alert.enabled else 'Disabled' }}</span>
+              </td>
+              <td class="px-4 py-4">
+                <div class="flex flex-wrap items-center gap-2">
+                  <form method="post" action="/social-alerts/toggle">
+                    <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                    <input type="hidden" name="alert_id" value="{{ alert.id }}"/>
+                    <button type="submit" class="btn-secondary text-xs px-3 py-2">
+                      <i class="fa {% if alert.enabled %}fa-pause{% else %}fa-play{% endif %}"></i>
+                      {{ 'Disable' if alert.enabled else 'Enable' }}
+                    </button>
+                  </form>
+                  <form method="post" action="/social-alerts/delete" onsubmit="return confirm('Delete this alert?')">
+                    <input type="hidden" name="guild_id" value="{{ guild_id }}"/>
+                    <input type="hidden" name="alert_id" value="{{ alert.id }}"/>
+                    <button type="submit" class="btn-danger text-xs px-3 py-2"><i class="fa fa-trash"></i> Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="px-5 py-10 text-center text-slate-500 text-sm">No social alerts configured yet. Add a Twitch, YouTube, or RSS target above.</div>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  (() => {
+    const guildId = {{ guild_id or 'null' }};
+    const channelSelects = Array.from(document.querySelectorAll('[data-channel-select]'));
+    const templateSources = {
+      twitch: {{ stream_default_template|tojson }},
+      youtube: '🔴 **{creator}** is live on YouTube: **{title}**\n{link}',
+      rss: {{ rss_default_template|tojson }},
+    };
+
+    function syncSelect(select) {
+      const form = select.closest('form');
+      if (!form) return;
+      const input = form.querySelector('[data-channel-input]');
+      if (!input) return;
+      if (select.value) {
+        input.value = select.value;
+      }
+    }
+
+    function maybeApplyTemplate(select) {
+      const form = select.closest('form');
+      if (!form) return;
+      const textarea = form.querySelector('[data-template-target]');
+      if (!textarea || textarea.value.trim()) return;
+      const template = templateSources[select.value] || templateSources.twitch;
+      textarea.placeholder = template;
+    }
+
+    channelSelects.forEach((select) => {
+      select.addEventListener('change', () => syncSelect(select));
+    });
+
+    document.querySelectorAll('[data-template-source]').forEach((select) => {
+      select.addEventListener('change', () => maybeApplyTemplate(select));
+      maybeApplyTemplate(select);
+    });
+
+    if (guildId === null) return;
+
+    fetch(`/api/guild-channels/${guildId}`)
+      .then((response) => response.ok ? response.json() : { channels: [] })
+      .then((payload) => {
+        const channels = Array.isArray(payload.channels) ? payload.channels : [];
+        channelSelects.forEach((select) => {
+          const placeholder = select.dataset.channelPlaceholder || 'Choose a Discord channel…';
+          select.innerHTML = `<option value="">${placeholder}</option>`;
+          channels.forEach((channel) => {
+            const option = document.createElement('option');
+            option.value = channel.id;
+            option.textContent = `#${channel.name} — ${channel.id}`;
+            select.appendChild(option);
+          });
+        });
+      })
+      .catch(() => {
+        channelSelects.forEach((select) => {
+          select.innerHTML = '<option value="">Unable to load channels</option>';
+        });
+      });
+  })();
+</script>
+{% endblock %}

@@ -60,6 +60,7 @@ GUILD_ID_QUERIES = [
     "SELECT DISTINCT guild_id FROM highlights WHERE guild_id IS NOT NULL",
     "SELECT DISTINCT guild_id FROM github_subscriptions WHERE guild_id IS NOT NULL",
     "SELECT DISTINCT guild_id FROM gitlab_subscriptions WHERE guild_id IS NOT NULL",
+    "SELECT DISTINCT guild_id FROM social_alerts WHERE guild_id IS NOT NULL",
     "SELECT DISTINCT guild_id FROM learned_facts WHERE guild_id IS NOT NULL",
     "SELECT DISTINCT guild_id FROM response_feedback WHERE guild_id IS NOT NULL",
     "SELECT DISTINCT guild_id FROM crawl_sources WHERE guild_id IS NOT NULL",

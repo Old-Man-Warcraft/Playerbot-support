@@ -174,4 +174,53 @@ class BaseDatabase:
         if cur.rowcount > 0:
             logger.info("Migration: fixed %d giveaways with NULL status to 'active'", cur.rowcount)
 
+        cur = await self._db.execute(  # type: ignore[union-attr]
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='social_alerts'"
+        )
+        social_alerts_row = await cur.fetchone()
+        social_alerts_sql = (social_alerts_row[0] if social_alerts_row else "") or ""
+        if "UNIQUE(guild_id, account_id)" in social_alerts_sql:
+            await self._db.executescript(  # type: ignore[union-attr]
+                """
+                CREATE TABLE social_alerts_new (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id         INTEGER NOT NULL,
+                    channel_id       INTEGER NOT NULL,
+                    platform         TEXT    NOT NULL DEFAULT 'rss',
+                    account_id       TEXT    NOT NULL,
+                    alert_type       TEXT    NOT NULL DEFAULT 'new',
+                    message_template TEXT    NOT NULL DEFAULT '📰 **{title}**\n{link}',
+                    enabled          INTEGER NOT NULL DEFAULT 1,
+                    created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(guild_id, platform, account_id, alert_type)
+                );
+                INSERT INTO social_alerts_new (
+                    id,
+                    guild_id,
+                    channel_id,
+                    platform,
+                    account_id,
+                    alert_type,
+                    message_template,
+                    enabled,
+                    created_at
+                )
+                SELECT
+                    id,
+                    guild_id,
+                    channel_id,
+                    platform,
+                    account_id,
+                    alert_type,
+                    message_template,
+                    enabled,
+                    created_at
+                FROM social_alerts;
+                DROP TABLE social_alerts;
+                ALTER TABLE social_alerts_new RENAME TO social_alerts;
+                CREATE INDEX IF NOT EXISTS idx_social_alerts_guild ON social_alerts (guild_id);
+                """
+            )
+            logger.info("Migration: rebuilt social_alerts uniqueness by platform and alert type")
+
         await self._db.commit()  # type: ignore[union-attr]

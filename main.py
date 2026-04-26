@@ -76,6 +76,7 @@ async def main() -> None:
     intents.invites = True   # Required for invite-tracking in mod-log join events
 
     bot = commands.Bot(command_prefix="!", intents=intents)
+    bot.config = config  # type: ignore[attr-defined]
 
     async def _seed_guild(guild: discord.Guild) -> None:
         """Persist basic guild metadata so the dashboard can discover and label this guild."""
@@ -160,7 +161,7 @@ async def main() -> None:
     await bot.add_cog(RaidProtectionCog(bot, db))
     await bot.add_cog(InviteTrackingCog(bot, db))
     await bot.add_cog(BirthdayCog(bot, db))
-    await bot.add_cog(SocialAlertsCog(bot, db))
+    await bot.add_cog(SocialAlertsCog(bot, db, config))
 
     # --- Bot-level interaction check for custom permission overrides ---
     @bot.tree.interaction_check

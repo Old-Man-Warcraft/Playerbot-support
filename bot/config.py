@@ -89,6 +89,17 @@ class Config:
         default_factory=lambda: os.getenv("GITLAB_URL", "https://gitlab.com")
     )
 
+    # ── Streaming integrations ───────────────────────────────────────
+    twitch_client_id: str | None = field(
+        default_factory=lambda: os.getenv("TWITCH_CLIENT_ID")
+    )
+    twitch_client_secret: str | None = field(
+        default_factory=lambda: os.getenv("TWITCH_CLIENT_SECRET")
+    )
+    youtube_api_key: str | None = field(
+        default_factory=lambda: os.getenv("YOUTUBE_API_KEY")
+    )
+
 
 # ── Hard-coded defaults for guild-level settings ────────────────────
 # Used as fallback when a guild has no DB override.  Admins can change

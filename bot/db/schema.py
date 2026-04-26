@@ -395,7 +395,7 @@ CREATE TABLE IF NOT EXISTS social_alerts (
     message_template TEXT    NOT NULL DEFAULT '📰 **{title}**\n{link}',
     enabled          INTEGER NOT NULL DEFAULT 1,
     created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(guild_id, account_id)
+    UNIQUE(guild_id, platform, account_id, alert_type)
 );
 CREATE INDEX IF NOT EXISTS idx_social_alerts_guild ON social_alerts (guild_id);
 

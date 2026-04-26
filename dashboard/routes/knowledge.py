@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import uuid
 from urllib.parse import urlencode
 
@@ -34,6 +35,19 @@ logger = logging.getLogger("dashboard")
 router = APIRouter()
 
 _crawl_jobs: dict[str, dict] = {}
+
+
+async def _get_learned_fact_qdrant_id(guild_id: int, fact_id: int) -> str | None:
+    try:
+        row = await db_fetchone(
+            "SELECT qdrant_id FROM learned_facts WHERE id = ? AND guild_id = ?",
+            (fact_id, guild_id),
+        )
+    except sqlite3.OperationalError as exc:
+        if "no such column: qdrant_id" not in str(exc).lower():
+            raise
+        return None
+    return row["qdrant_id"] if row and row.get("qdrant_id") else None
 
 
 def init(templates: Jinja2Templates) -> APIRouter:
@@ -196,11 +210,11 @@ def init(templates: Jinja2Templates) -> APIRouter:
         if r := auth_redirect(request):
             return r
         await require_guild_access(request, guild_id)
-        row = await db_fetchone("SELECT qdrant_id FROM learned_facts WHERE id = ? AND guild_id = ?", (fact_id, guild_id))
+        qdrant_id = await _get_learned_fact_qdrant_id(guild_id, fact_id)
         await db_execute("DELETE FROM learned_facts WHERE id = ? AND guild_id = ?", (fact_id, guild_id))
-        if row and row["qdrant_id"]:
+        if qdrant_id:
             from bot.qdrant_service import QdrantService
-            await QdrantService().delete_fact(guild_id, row["qdrant_id"])
+            await QdrantService().delete_fact(guild_id, qdrant_id)
         return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=training", status_code=302)
 
     @router.post("/knowledge/toggle-fact")
@@ -208,14 +222,14 @@ def init(templates: Jinja2Templates) -> APIRouter:
         if r := auth_redirect(request):
             return r
         await require_guild_access(request, guild_id)
-        row = await db_fetchone("SELECT qdrant_id FROM learned_facts WHERE id = ? AND guild_id = ?", (fact_id, guild_id))
+        qdrant_id = await _get_learned_fact_qdrant_id(guild_id, fact_id)
         await db_execute(
             "UPDATE learned_facts SET approved = ? WHERE id = ? AND guild_id = ?",
             (approved, fact_id, guild_id),
         )
-        if row and row["qdrant_id"]:
+        if qdrant_id:
             from bot.qdrant_service import QdrantService
-            await QdrantService().set_fact_approved(guild_id, row["qdrant_id"], int(approved))
+            await QdrantService().set_fact_approved(guild_id, qdrant_id, int(approved))
         return RedirectResponse(f"/knowledge?guild_id={guild_id}&tab=training", status_code=302)
 
     @router.post("/knowledge/reset-facts")

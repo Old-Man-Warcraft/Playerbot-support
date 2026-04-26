@@ -456,6 +456,68 @@ class DashboardLearnedFactsSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["c"], 0)
 
 
+class DashboardLearnedFactsLegacySchemaTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _session(guild_ids: list[int] | None = None, user_id: int = 1001) -> dict:
+        return {
+            "authenticated": True,
+            "discord_user_id": user_id,
+            "guild_access_ids": guild_ids or [],
+        }
+
+    async def asyncSetUp(self) -> None:
+        self._original_db_path = dashboard_helpers.DB_PATH
+        self._tmpdir = tempfile.TemporaryDirectory()
+        dashboard_helpers.DB_PATH = f"{self._tmpdir.name}/legacy_facts.db"
+        dashboard_app.DB_PATH = dashboard_helpers.DB_PATH
+
+        await dashboard_app.db_execute(
+            """
+            CREATE TABLE IF NOT EXISTS learned_facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                fact TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'conversation',
+                confidence REAL NOT NULL DEFAULT 1.0,
+                approved INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(guild_id, fact)
+            )
+            """
+        )
+
+    async def asyncTearDown(self) -> None:
+        dashboard_helpers.DB_PATH = self._original_db_path
+        dashboard_app.DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    async def test_delete_fact_succeeds_without_qdrant_id_column(self) -> None:
+        await dashboard_app.db_execute(
+            "INSERT INTO learned_facts (guild_id, fact, source, approved) VALUES (?, ?, ?, ?)",
+            (1, "Legacy fact without qdrant metadata.", "conversation", 1),
+        )
+
+        request = SimpleNamespace(session=self._session([1]))
+        response = await dashboard_app.knowledge_delete_fact(request, fact_id=1, guild_id=1)
+
+        self.assertEqual(response.status_code, 302)
+        row = await dashboard_app.db_fetchone("SELECT COUNT(*) AS c FROM learned_facts WHERE id = ?", (1,))
+        self.assertEqual(row["c"], 0)
+
+    async def test_toggle_fact_succeeds_without_qdrant_id_column(self) -> None:
+        await dashboard_app.db_execute(
+            "INSERT INTO learned_facts (guild_id, fact, source, approved) VALUES (?, ?, ?, ?)",
+            (1, "Legacy fact approval toggle.", "conversation", 0),
+        )
+
+        request = SimpleNamespace(session=self._session([1]))
+        response = await dashboard_app.knowledge_toggle_fact(request, fact_id=1, guild_id=1, approved=1)
+
+        self.assertEqual(response.status_code, 302)
+        row = await dashboard_app.db_fetchone("SELECT approved FROM learned_facts WHERE id = ?", (1,))
+        self.assertEqual(row["approved"], 1)
+
+
 class DashboardGuildListingTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._original_db_path = dashboard_helpers.DB_PATH

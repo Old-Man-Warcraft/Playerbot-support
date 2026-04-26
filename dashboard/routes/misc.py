@@ -114,7 +114,9 @@ COMMAND_CATALOGUE: list[dict] = [
     {"group": "Birthdays", "name": "birthday channel",   "description": "Set birthday announcement channel"},
     # Social Alerts
     {"group": "Social Alerts", "name": "social add",     "description": "Add an RSS feed alert"},
-    {"group": "Social Alerts", "name": "social remove",  "description": "Remove an RSS feed alert"},
+    {"group": "Social Alerts", "name": "social add_stream", "description": "Track a Twitch or YouTube live stream"},
+    {"group": "Social Alerts", "name": "social remove",  "description": "Remove a feed or stream alert"},
+    {"group": "Social Alerts", "name": "social test",    "description": "Preview a feed or live stream target"},
 ]
 
 

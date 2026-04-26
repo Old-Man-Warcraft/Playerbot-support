@@ -265,10 +265,15 @@ cp .env.example .env
 | `AUTOMOD_SPAM_THRESHOLD` | Messages to trigger spam | `5` |
 | `AUTOMOD_SPAM_INTERVAL` | Spam window in seconds | `5` |
 | `GITHUB_TOKEN` | GitHub Personal Access Token (optional) | *(empty)* |
+| `TWITCH_CLIENT_ID` | Twitch application client ID for live stream tracking | *(empty)* |
+| `TWITCH_CLIENT_SECRET` | Twitch application client secret for live stream tracking | *(empty)* |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 key for live stream tracking | *(empty)* |
 | `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
 | `QDRANT_API_KEY` | Qdrant API key (cloud only) | *(empty)* |
 
 Economy settings (payday amount, cooldown, currency name) are configurable per-guild via `/econset` commands.
+Twitch and YouTube live stream promotion uses `/social add_stream`, `/social list`, `/social toggle`, `/social remove`, and `/social test`. Message templates can include placeholders such as `{creator}`, `{title}`, `{link}`, `{game}`, `{viewers}`, and `{platform}`.
+The dashboard now includes a dedicated Streams page at `/social-alerts` for managing Twitch, YouTube, and RSS alerts in one place.
 
 #### Example: OpenAI
 ```env
@@ -336,6 +341,8 @@ Once the bot is online, run these in your server:
 /selfrole add role:@Gamer
 /selfrole panel channel:#roles
 /econset payday_amount amount:150
+/social add_stream channel:#live platform:Twitch account:yourchannel
+/social add_stream channel:#live platform:YouTube account:@yourchannel
 ```
 
 ---
