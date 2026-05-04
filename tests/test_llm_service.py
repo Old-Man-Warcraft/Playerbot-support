@@ -188,6 +188,7 @@ class LLMServiceCompatibilityTests(unittest.IsolatedAsyncioTestCase):
     def test_extended_reasoning_model_heuristic(self) -> None:
         self.assertTrue(extended_reasoning_model("o3-mini"))
         self.assertTrue(extended_reasoning_model("deepseek-ai/DeepSeek-R1"))
+        self.assertTrue(extended_reasoning_model("gpt-oss-120b"))
         self.assertTrue(extended_reasoning_model("qwen3-235b-a22b-thinking-2507"))
         self.assertFalse(extended_reasoning_model("gpt-4o-mini"))
 
@@ -256,6 +257,32 @@ class LLMServiceCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw.get("max_tokens"), 512)
         self.assertNotIn("max_completion_tokens", kw)
         self.assertEqual(kw.get("temperature"), 0.2)
+
+    async def test_get_response_openai_gpt_oss_uses_completion_budget(self) -> None:
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content="ok", tool_calls=None),
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+        )
+        llm, create = self._make_service([response])
+        llm._llm_base_url = "https://api.openai.com/v1"
+
+        await llm.get_response(
+            [{"role": "user", "content": "x"}],
+            system_prompt="s",
+            model="gpt-oss-120b",
+            temperature=0.2,
+            max_tokens=2048,
+            allow_tools=False,
+        )
+        kw = create.await_args.kwargs
+        self.assertEqual(kw.get("max_completion_tokens"), 2048)
+        self.assertNotIn("max_tokens", kw)
+        self.assertNotIn("temperature", kw)
 
     async def test_get_response_adds_qwen_chat_template_kwargs(self) -> None:
         response = SimpleNamespace(

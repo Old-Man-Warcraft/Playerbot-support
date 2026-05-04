@@ -178,6 +178,7 @@ def extended_reasoning_model(model_id: str) -> bool:
         "reasoning",
         "deepseek-r1",
         "deepseek-reasoner",
+        "gpt-oss",
         "qwq",
         "reflection",
         "gpt-5",

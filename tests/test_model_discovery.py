@@ -53,6 +53,18 @@ class ModelDiscoveryResolutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resolved, hf_id)
 
+    async def test_resolve_model_id_gpt120b_matches_gpt_oss_checkpoint(self) -> None:
+        service = self._make_service()
+        service.get_available_models = AsyncMock(
+            return_value=[
+                ModelInfo("gpt-oss-120b", "GPT OSS 120B", "API", "chat"),
+            ]
+        )
+
+        resolved = await service.resolve_model_id("GPT 120b", "chat")
+
+        self.assertEqual(resolved, "gpt-oss-120b")
+
     def test_embeddinggemma_is_detected_as_embedding_model(self) -> None:
         service = self._make_service()
 

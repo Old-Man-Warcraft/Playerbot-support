@@ -30,6 +30,10 @@ def _ollama_http_root(base_url: str) -> str:
 
 
 _MODEL_ALIAS_OVERRIDES: dict[str, str] = {
+    "gpt120b": "gpt-oss-120b",
+    "gptoss120b": "gpt-oss-120b",
+    "gpt20b": "gpt-oss-20b",
+    "gptoss20b": "gpt-oss-20b",
     "qwen35": "qwen3.5",
     "qwen35397b": "qwen3.5",
     "qwen35397binstruct": "qwen3.5",
@@ -93,6 +97,23 @@ def _qwen3_chat_family_lookup_keys(model_id: str) -> set[str]:
     keys.add("qwen35")
     if "30b" in lower or "32b" in lower:
         keys.add("qwen3530b")
+    return keys
+
+
+def _gpt_oss_lookup_keys(model_id: str) -> set[str]:
+    """Extra lookup keys so user shorthand resolves to GPT-OSS served model IDs."""
+    lower = model_id.lower()
+    compact = re.sub(r"[^a-z0-9]+", "", lower)
+    if "gpt" not in compact:
+        return set()
+
+    keys: set[str] = set()
+    for size in ("120b", "20b"):
+        if size not in compact:
+            continue
+        if "oss" in compact or compact == f"gpt{size}":
+            keys.add(f"gpt{size}")
+            keys.add(f"gptoss{size}")
     return keys
 
 
@@ -274,6 +295,7 @@ class ModelDiscoveryService:
             keys.add(normalized.removesuffix("chat"))
 
         keys |= _qwen3_chat_family_lookup_keys(value)
+        keys |= _gpt_oss_lookup_keys(value)
 
         return [key for key in keys if key]
     
